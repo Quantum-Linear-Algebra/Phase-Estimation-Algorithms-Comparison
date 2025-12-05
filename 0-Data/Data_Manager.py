@@ -116,13 +116,13 @@ def create_hamiltonian(parameters, scale=True, show_steps=False):
             H += -temp.to_matrix()
             if show_steps: print("-"+str(temp)+" ", end='')
         # peroidic bound
-        temp = Pauli('')
-        for j in range(qubits):
-            if (j == 0 or j == qubits-1):
-                temp ^= Pauli('Z')
-            else:
-                temp ^= Pauli('I')
-        H += -temp.to_matrix()
+        # temp = Pauli('')
+        # for j in range(qubits):
+        #     if (j == 0 or j == qubits-1):
+        #         temp ^= Pauli('Z')
+        #     else:
+        #         temp ^= Pauli('I')
+        # H += -temp.to_matrix()
         if show_steps: print("-"+str(temp)+" ", end='')
         for i in range(qubits):
             temp = Pauli('')
@@ -272,7 +272,62 @@ def run_hadamard_tests(controlled_U, statevector, W = 'Re', shots=100):
     exp_val = calculate_exp_vals(counts, shots)
     return exp_val
 
-def create_hadamard_tests(parameters, backend, U:UnitaryGate, statevector, W = 'Re', modified=True):
+# def create_hadamard_tests(parameters, backend, U:UnitaryGate, statevector, W = 'Re', modified=True):
+#     '''
+#     Creates a transpiled hadamard tests for the specificed backend.
+
+#     Parameters:
+#      - backend: the backend to transpile the circuit on
+#      - controlled_U: the control operation to check phase of
+#      - statevector: a vector to initalize the statevector of
+#                     eigenqubits
+#      - W: what type of hadamard tests to use (Re or Im)
+    
+#     Returns:
+#      - trans_qc: the transpiled circuit
+#     '''
+#     qubits = parameters['sites']
+#     qr_ancilla = QuantumRegister(1)
+#     qr_eigenstate = QuantumRegister(qubits)
+#     cr = ClassicalRegister(1)
+#     qc = QuantumCircuit(qr_ancilla, qr_eigenstate, cr)
+#     qc.h(qr_ancilla)
+#     if modified:
+#         qc_init = QuantumCircuit(qr_ancilla, qr_eigenstate)
+#         if parameters['system'] == 'TFI':
+#             if parameters['g'] < 1:
+#                 # construct GHZ state
+#                 qc_init.ch(qr_ancilla,qr_eigenstate[0])
+#                 for qubit in range(1, qubits):
+#                     qc_init.cx(qubit, qubit+1)
+#             else:
+#                 # construct even superposition
+#                 for qubit in range(1, qubits+1):
+#                     qc_init.ch(qr_ancilla, qubit)
+#         else:
+#             gate = StatePreparation(statevector)
+#             qc_init = qc_init.compose(gate.control(annotated="yes"))
+        
+#         qc = qc.compose(qc_init)
+#         qc = qc.compose(U, range(1, qubits+1))
+#         qc.x(0)
+#         qc = qc.compose(qc_init)
+#         qc.x(0)
+
+#         phase = np.log(complex(U.to_matrix()[0][0])).imag
+#         qc.rz(phase, qr_ancilla)
+#     else:
+#         qc.initialize(statevector, qr_eigenstate)
+#         controlled_U = U.control(annotated="yes")
+#         qc.append(controlled_U, qargs = [qr_ancilla] + qr_eigenstate[:])
+    
+#     if W[0:2].upper() == 'IM' or W[0].upper() == 'S': qc.sdg(qr_ancilla)
+#     qc.h(qr_ancilla)
+#     qc.measure(qr_ancilla[0],cr[0])
+#     trans_qc = transpile(qc, backend, optimization_level=3)
+#     return trans_qc
+
+def create_hadamard_tests(parameters, backend, U:UnitaryGate, statevector=[], W = 'Re', modified=True):
     '''
     Creates a transpiled hadamard tests for the specificed backend.
 
@@ -282,6 +337,7 @@ def create_hadamard_tests(parameters, backend, U:UnitaryGate, statevector, W = '
      - statevector: a vector to initalize the statevector of
                     eigenqubits
      - W: what type of hadamard tests to use (Re or Im)
+     - modified: uses the modified hadamard test if true
     
     Returns:
      - trans_qc: the transpiled circuit
@@ -293,6 +349,11 @@ def create_hadamard_tests(parameters, backend, U:UnitaryGate, statevector, W = '
     qc = QuantumCircuit(qr_ancilla, qr_eigenstate, cr)
     qc.h(qr_ancilla)
     if modified:
+        print(U.to_matrix(), '\n')
+        U_mat = U.to_matrix()
+        import scipy; phase = scipy.linalg.logm(U_mat)[0][0].imag
+        phase = np.log(complex(U_mat[0][0])).imag
+        print(phase, '\n')
         qc_init = QuantumCircuit(qr_ancilla, qr_eigenstate)
         if parameters['system'] == 'TFI':
             if parameters['g'] < 1:
@@ -313,19 +374,37 @@ def create_hadamard_tests(parameters, backend, U:UnitaryGate, statevector, W = '
         qc.x(0)
         qc = qc.compose(qc_init)
         qc.x(0)
-
-        phase = np.log(complex(U.to_matrix()[0][0])).imag
         qc.rz(phase, qr_ancilla)
     else:
-        qc.initialize(statevector, qr_eigenstate)
+        print(U.to_matrix(), '\n')
+
+        qc_init = QuantumCircuit(qr_ancilla, qr_eigenstate)
+        if parameters['system'] == 'TFI':
+            if parameters['g'] < 1:
+                # construct GHZ state
+                qc_init.h(qr_eigenstate[0])
+                for qubit in range(1, qubits):
+                    qc_init.cx(qubit, qubit+1)
+            else:
+                # construct even superposition
+                for qubit in range(1, qubits+1):
+                    qc_init.h(qubit)
+        else:
+            gate = StatePreparation(statevector)
+            qc_init = qc_init.compose(gate, qubits=qr_eigenstate)
+        
+        qc = qc.compose(qc_init)
         controlled_U = U.control(annotated="yes")
         qc.append(controlled_U, qargs = [qr_ancilla] + qr_eigenstate[:])
     
     if W[0:2].upper() == 'IM' or W[0].upper() == 'S': qc.sdg(qr_ancilla)
     qc.h(qr_ancilla)
     qc.measure(qr_ancilla[0],cr[0])
-    trans_qc = transpile(qc, backend, optimization_level=3)
+    # print(qc)
+    # trans_qc = transpile(qc, backend, optimization_level=3)
+    trans_qc = transpile(qc, optimization_level=3, basis_gates=['id','ecr','rz','sx','x'])
     return trans_qc
+
 
 def calculate_exp_vals(counts, shots):
     '''
@@ -366,6 +445,70 @@ def make_overlap(ground_state, p):
     phi = np.sqrt(p) * ground_state + np.sqrt(1 - p) * random_vec
     return phi
 
+def rz_on_target_for_ZZ(qc, q0, q1, alpha):
+    # implements exp(-i * alpha * Z⊗Z) using CNOT-Rz-CNOT
+    # This implements exp(-i * alpha Z⊗Z) by doing Rz(2*alpha) on target with CNOT sandwich.
+    # ---CNOT---
+    # qc.rz(-np.pi/2,q0)
+    # qc.rz(-np.pi,q1)
+    # qc.sx(q1)
+    # qc.rz(-np.pi, q1)
+    # qc.ecr(q0,q1)
+    # qc.x(q0)
+
+    # # ---Rz---
+    # qc.rz(2*alpha, q1)
+
+    # # ---CNOT---
+    # qc.rz(-np.pi/2,q0)
+    # qc.rz(-np.pi,q1) # add rz rotation (2*alpha)
+    # qc.sx(q1)
+    # qc.rz(-np.pi,q1)
+    # qc.ecr(q0,q1)
+    # qc.x(q0)
+
+    qc.cx(q0,q1)
+    qc.rz(2*alpha, q1)
+    qc.cx(q0,q1)
+
+def rx_on(qc, q, beta):
+    # implements exp(-i * beta * X) via Rx(2*beta) (Qiskit Rx angle φ implements exp(-i φ/2 X))
+    # ---Rx---
+    # qc.rz(np.pi/2,q)
+    # qc.sx(q)
+    # qc.rz(2*beta+np.pi, q)
+    # qc.sx(q)
+    # qc.rz(5*np.pi/2,q)
+    qc.rx(2*beta, q)
+
+def trotter_step_second_order(qc, j, g, dt, n_qubits):
+    # positive j and g values to account for -t in time evolution
+    # exponential for x
+    beta_half = g * (dt/2)
+
+    # exponential for zz
+    alpha = j * dt
+
+    # half X rotations
+    for q in range(n_qubits):
+        rx_on(qc, q, beta_half)
+
+    # full ZZ
+    for q in range(n_qubits - 1):
+        rz_on_target_for_ZZ(qc, q, q+1, alpha)
+
+    # half X rotations again
+    for q in range(n_qubits):
+        rx_on(qc, q, beta_half)
+
+def trotter_evolution(j, g, n_qubits, t=1.0, r=1):
+    # r = number of Trotter steps
+    qc = QuantumCircuit(n_qubits)
+    dt = t / r
+    for _ in range(r):
+        trotter_step_second_order(qc, j, g, dt, n_qubits)
+    return qc.to_gate(label='trotter')
+
 def hadamard_tests_circuit_info(parameters, T, observables, ML_QCELS=False, pauli_string='', gauss=[]):
     '''
     Gets information for creating exp_vals circuits. Creates controlled unitaries,
@@ -384,8 +527,8 @@ def hadamard_tests_circuit_info(parameters, T, observables, ML_QCELS=False, paul
     VQPE = pauli_string!=''
     QMEGS = len(gauss)!=0
     unordered_time_series = QMEGS or ML_QCELS
-    use_F3C = not VQPE and parameters['system'] == 'TFI' and parameters['method_for_model']=="F"
-    
+    use_F3C = not VQPE and parameters['system'] == 'TFI' and parameters['method_for_model'] == "F"
+    use_Trotter = not VQPE and parameters['system'] == 'TFI' and parameters['method_for_model'] == 'T'
 
     if ML_QCELS:
         time_steps = set()
@@ -416,6 +559,12 @@ def hadamard_tests_circuit_info(parameters, T, observables, ML_QCELS=False, paul
                 Unitaries.append(generate_TFIM_gates(sites, 1, time_step, g, scaling, coupling, trotter, '../f3cpp', include_0 = False)[0])
         else:
             Unitaries = generate_TFIM_gates(sites, observables, T/observables, g, scaling, coupling, trotter, '../f3cpp')
+    elif use_Trotter:
+        trotter = parameters['trotter']
+        coupling, g = scale_TFIM_parameters(parameters)
+        print(coupling, g)
+        for time_step in time_steps:
+            Unitaries.append(trotter_evolution(-coupling, -g, parameters['sites'], time_step, trotter))
     else:
         ham,_ = create_hamiltonian(parameters)
         Unitaries = []
@@ -425,6 +574,8 @@ def hadamard_tests_circuit_info(parameters, T, observables, ML_QCELS=False, paul
                 pauli = Pauli(pauli_string).to_matrix()
                 mat = pauli@mat
             Unitaries.append(UnitaryGate(mat))
+
+    print('not time steps', time_steps)
     return Unitaries, statevector
 
 def generate_exp_vals(parameters, gausses={}):
@@ -496,8 +647,37 @@ def transpile_hadamard_tests(parameters, T, observables, backend, W='Re', ML_QCE
     tqcs = []
     Unitaries, statevector = hadamard_tests_circuit_info(parameters, T, observables, ML_QCELS=ML_QCELS, pauli_string=pauli_string, gauss=gauss)
     for U in Unitaries:
-        tqcs.append(create_hadamard_tests(parameters, backend, U, statevector, W=W))
+        tqcs.append(create_hadamard_tests(parameters, backend, U, statevector, W=W, modified=parameters['mod_ht']))
     return tqcs
+
+def scale_TFIM_parameters(parameters):
+    scaling = parameters['scaling']
+    qubits = parameters['sites']
+    g = parameters['g']
+    coupling = 1
+    # calculate new scaled parameters
+    H = np.zeros((2**qubits, 2**qubits), dtype=np.complex128)
+    for i in range(qubits-1):
+        temp = Pauli('')
+        for j in range(qubits):
+            if (j == i or j == i+1):
+                temp ^= Pauli('Z')
+            else:
+                temp ^= Pauli('I')
+        H += -temp.to_matrix()
+    for i in range(qubits):
+        temp = Pauli('')
+        for j in range(qubits):
+            if (j == i):
+                temp ^= Pauli('X')
+            else:
+                temp ^= Pauli('I')
+        H += -g*temp.to_matrix()
+
+    largest_eig = np.max(abs(np.linalg.eigvals(H)))
+    coupling *= scaling/largest_eig
+    g *= scaling/largest_eig
+    return coupling, g
 
 def generate_TFIM_gates(qubits, steps, dt, g, scaling, coupling, trotter, location, include_0 = True):
     exe = location+"/release/examples/f3c_time_evolution_TFYZ"
