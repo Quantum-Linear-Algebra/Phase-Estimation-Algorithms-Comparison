@@ -84,8 +84,8 @@ def create_hadamard_tests(parameters, backend, U:UnitaryGate, statevector=[], W 
         qc.append(controlled_U, qargs = [qr_ancilla] + qr_eigenstate[:])
     
     if W[0:2].upper() == 'IM' or W[0].upper() == 'S': qc.sdg(qr_ancilla)
-    # qc.h(qr_ancilla)
-    # qc.measure(qr_ancilla[0],cr[0])
+    qc.h(qr_ancilla)
+    qc.measure(qr_ancilla[0],cr[0])
     # print(qc)
     # trans_qc = transpile(qc, backend, optimization_level=3)
     trans_qc = transpile(qc, optimization_level=3, basis_gates=['id','ecr','rz','sx','x'])
@@ -158,7 +158,7 @@ def create_trot_ht(parameters, backend, trot_u_circ, statevector=[], W = 'Re', m
         qc.append(controlled_U, qargs = [qr_ancilla] + qr_eigenstate[:])
     
     if W[0:2].upper() == 'IM' or W[0].upper() == 'S': qc.sdg(qr_ancilla)
-    # qc.h(qr_ancilla)
+    qc.h(qr_ancilla)
     # qc.measure(qr_ancilla[0],cr[0])
     # print(qc)
     # trans_qc = transpile(qc, backend, optimization_level=3)
@@ -357,135 +357,138 @@ def calculate_exp_vals(counts, shots):
     return meas
 
 if __name__ == '__main__':
-    parameters = {}
-    parameters['sites']    = 8
-    parameters['scaling']  = 3*pi/4
-    parameters['shifting'] = 0
-    parameters['g']        = 4 # magnetic field strength for TFIM
-
-    H, E_0, E_L = create_hamiltonian(parameters, show_steps=False)
-    
-    eig_val, eig_vec = eigh(H)
-    ground_state = eig_vec[:,0]/norm(eig_vec[:,0])
-    print('ground', ground_state)
-    statevector = [0]*(2**parameters['sites'])
-    for i in range(len(ground_state)):
-        # print(abs(ground_state[i])**2)
-        if abs(ground_state[i]) > 1/len(ground_state):
-            statevector[i] = 1
-    statevector = statevector/norm(statevector)
-    print('statevector', statevector)
-    print('overlap', abs(statevector@ground_state.conj().T)**2)
-    
-    t = 1
-    exact_mat = expm(-1j*H*t)
-    # U = UnitaryGate(expm(-1j*H*t))
-    
-    shots = 1000
-
     use_hardware = False
     if use_hardware:
         backend = create_hardware_backend()
     else:
         backend = AerSimulator()
-
     sampler = Sampler(backend)
 
-    trans_qcs = []
-    # # Real modified Hadamard test
-    # trans_qc = create_hadamard_tests(parameters, backend, U, modified=True)
-    # print('Real modified Hadamard test gate counts:', trans_qc.count_ops())
-
-    # trans_qc.draw(output = 'mpl', filename='HT_opt3_site'+str(parameters['sites'])+'_uncontrol.pdf', idle_wires=False)
-
-    # r=int(np.ceil(t)**2)+2
-    r=2
-    print('r',r)
+    t = 1
+    # shots = 1000
     # Trotter circuit
-    trot_j = parameters['scaling']/E_L
-    trot_g = parameters['g']*parameters['scaling']/E_L
+    # trot_j = parameters['scaling']/E_L
+    # trot_g = parameters['g']*parameters['scaling']/E_L
 
-    sites_list = np.arange(2,9,1)
-    trot_list = np.linspace(2,14,len(sites_list)).astype(int)
-    trot_list = [int((x//2*2)+1) for x in trot_list]
-    norm_diffs = []
-    depths_2q = []
-    qiskit_depths = []
+    sites_list = np.arange(2,8,1)
+    # trot_list = [int((x//2*2)+1) for x in np.linspace(2,14,len(sites_list)).astype(int)]
+    trot_list = np.arange(2,10,1).tolist()
 
     print('sites list', sites_list)
     print('trot list', trot_list)
 
+    norm_diffs = []
+    # depths_2q = []
+    # qiskit_depths = []
+    spectral_diffs = []
+    spectral_sorted_diffs = []
     for i in range(len(sites_list)):
-        print('Generating data for',sites_list[i],'sites')
         norm_diffs.append([])
-        depths_2q.append([])
+        spectral_diffs.append([])
+        spectral_sorted_diffs.append([])
 
+        # depths_2q.append([])
+        print('Generating data for',sites_list[i],'sites')
+
+        # create example circuit
         parameters = {}
         parameters['sites']    = sites_list[i]
         parameters['scaling']  = 3*pi/4
         parameters['shifting'] = 0
         parameters['g']        = 4 
         H, E_0, E_L = create_hamiltonian(parameters, show_steps=False)
+        U = expm(-1j*H*t)
+        U_eigval, _ = eig(U)
+        U_phases = [-np.log(eigval).imag for eigval in U_eigval]
+        U_phases_sorted = np.sort(U_phases)
+        # print(U_phases)
+        # qc_qiskit = create_hadamard_tests(parameters, backend, U, modified=True)
+        # trans_qc_qiskit = transpile(qc_qiskit, optimization_level=3, basis_gates=['id','ecr','rz','sx','x']) # just rpi_rensselaer basis gates
+        # qiskit_depths.append(qc_qiskit.count_ops().get('ecr'))
         trot_j = parameters['scaling']/E_L
-        trot_g = parameters['g']*parameters['scaling']/E_L  
-        exact_mat = expm(-1j*H*t)
-        U = UnitaryGate(exact_mat)
-        qc_qiskit = create_hadamard_tests(parameters, backend, U, modified=True)
-        qiskit_depths.append(qc_qiskit.count_ops().get('ecr'))
+        trot_g = parameters['g']*parameters['scaling']/E_L
         for j in range(len(trot_list)):
-            qc_trot = trotter_evolution(-trot_j, -trot_g, sites_list[i], t=t, r=trot_list[j]) # increase r to reduce Trotter error
-            qc_trot_unit = qc_trot
-            qc_trot = create_trot_ht(parameters, backend, qc_trot, modified=True)
-            # qc_trot = transpile(qc_trot, optimization_level=3, basis_gates=['id','ecr','rz','sx','x']) # just rpi_rensselaer basis gates
-    #         print(' gate counts:', qc_trot.count_ops())
+            print('  trotter steps:', trot_list[j])
+            qc_trot_unitary = trotter_evolution(-trot_j, -trot_g, sites_list[i], t=t, r=trot_list[j]) # increase r to reduce Trotter error
+            trans_qc_trot = transpile(qc_trot_unitary, optimization_level=3, basis_gates=['id','ecr','rz','sx','x']) # just rpi_rensselaer basis gates
+            trot_mat = Operator(trans_qc_trot).data
+            norm_diffs[i].append(np.linalg.norm(trot_mat-U, ord=2))
 
-    #         trot_mat = Operator(qc_trot).data    
-    #         norm_diffs[i].append(np.linalg.norm(trot_mat-exact_mat, ord=2))
-            depths_2q[i].append(qc_trot.count_ops().get('ecr'))
-    # norm_diffs = np.array(norm_diffs)
-    # depths_2q = np.array(depths_2q)
+            trot_eigval, _ = eig(trot_mat)
+            trot_phases = [-np.log(eigval).imag for eigval in trot_eigval]
+            
+            sum = 0
+            for phase_index in range(len(U_phases)):
+                sum += abs(trot_phases[phase_index]-U_phases[phase_index])
+            spectral_diffs[i].append(sum)
+
+            trot_phases_sorted = np.sort(trot_phases)
+            sum = 0
+            for phase_index in range(len(U_phases_sorted)):
+                sum += abs(trot_phases_sorted[phase_index]-U_phases_sorted[phase_index])
+            spectral_sorted_diffs[i].append(sum/len(U_phases_sorted))
+            
+            # qc_trot = create_trot_ht(parameters, backend, qc_trot_unitary, modified=True)
+            # qiskit_mat = Operator(qc_qiskit).data
+            # trans_qc_trot = transpile(qc_trot, optimization_level=3, basis_gates=['id','ecr','rz','sx','x']) # just rpi_rensselaer basis gates
+            # print(' gate counts:', trans_qc_trot.count_ops())
+            # depths_2q[i].append(trans_qc_trot.count_ops().get('ecr'))
+        
     # print(norm_diffs)
+    # print(spectral_diffs)
     # print(depths_2q)
-    for i in range(len(depths_2q)): depths_2q[i].append(qiskit_depths[i])
+    # for i in range(len(depths_2q)): depths_2q[i].append(qiskit_depths[i])
 
-    fig, axs = plt.subplots(1, 1, figsize=(6,6))
-    # im1 = axs[0].imshow(norm_diffs, norm=LogNorm(vmin=np.min(norm_diffs[norm_diffs>0]), vmax=np.max(norm_diffs)))
+    fig, axes = plt.subplots(1, 2, figsize=(2*len(trot_list),len(sites_list)))
 
-    # # Show all ticks and label them with the respective list entries
-    # axs[0].set_xticks(range(len(trot_list)), labels=np.array(trot_list).astype(str),
-    #             rotation=45, ha="right", rotation_mode="anchor")
-    # axs[0].set_yticks(range(len(sites_list)), labels=np.array(sites_list).astype(str))
+    colorbar_scale = LogNorm(vmin=10**0, vmax=10**-5)
+    im1 = axes[0].imshow(norm_diffs, norm=colorbar_scale)#LogNorm(vmin=np.min(norm_diffs), vmax=np.max(norm_diffs)))
+    for ax in axes:
+        ax.set_xticks(range(len(trot_list)), labels=np.array(trot_list).astype(str),
+                    rotation=45, ha="right", rotation_mode="anchor")
+        ax.set_yticks(range(len(sites_list)), labels=np.array(sites_list).astype(str))
 
-    # # Loop over data dimensions and create text annotations.
-    # # for i in range(len(sites_list)):
-    # #     for j in range(len(trot_list)):
-    # #         text = ax.text(j, i, norm_diffs[i][j],
-    # #                     ha="center", va="center", color="w")
-    # cbar = fig.colorbar(im1, ax=axs[0])
-    # cbar.set_label('2-norm difference')
-    # axs[0].set_title("Trotterized TFIM TE U err")
-    # axs[0].set_xlabel('Trotter Steps')
-    # axs[0].set_ylabel('TFIM Sites')
-
-    im2 = axs.imshow(depths_2q)
-
-    # Show all ticks and label them with the respective list entries
-    trot_list.append('qiskit')
-    axs.set_xticks(range(len(trot_list)), labels=np.array(trot_list).astype(str),
-                rotation=45, ha="right", rotation_mode="anchor")
-    axs.set_yticks(range(len(sites_list)), labels=np.array(sites_list).astype(str))
-    cbar = fig.colorbar(im2, ax=axs)
-    cbar.set_label('2-qubit gate counts')
-    axs.set_title("Modified HT TFIM 2-q gate counts")
-    axs.set_xlabel('Trotter Steps/Method')
-    axs.set_ylabel('TFIM Sites')
     # Loop over data dimensions and create text annotations.
-    for i in range(len(sites_list)):
-        for j in range(len(trot_list)):
-            text = axs.text(j, i, depths_2q[i][j],
-                        ha="center", va="center", color="w")
+    # for i in range(len(sites_list)):
+    #     for j in range(len(trot_list)):
+    #         axes[0].text(j, i, f'{np.log(norm_diffs[i][j]):1.2f}', ha="center", va="center", color="w")
+    cbar = fig.colorbar(im1, ax=axes[0])
+    cbar.set_label('2-norm difference')
+
     
-    plt.savefig('2-Graphing/Graphs/heatmap.pdf')
+    # # print(np.min(spectral_diffs), np.max(spectral_diffs))
+    # spectrum_diff_ax = axes[1].imshow(spectral_diffs, norm=colorbar_scale)#LogNorm(vmin=np.min(spectral_diffs), vmax=np.max(spectral_diffs)))
+    # cbar = fig.colorbar(spectrum_diff_ax, ax=axes[1])
+    # cbar.set_label('Phase difference for entire spectrum')
+
+    spectrum_sorted_diff_ax = axes[1].imshow(spectral_sorted_diffs, norm=colorbar_scale)#LogNorm(vmin=np.min(spectral_sorted_diffs), vmax=np.max(spectral_sorted_diffs)))
+    cbar = fig.colorbar(spectrum_sorted_diff_ax, ax=axes[1])
+    cbar.set_label('Phase difference for sorted spectrum')
+    # axes[1].set_xticks(range(len(trot_list)), labels=np.array(trot_list).astype(str),
+    #             rotation=45, ha="right", rotation_mode="anchor")
+    # axes[1].set_yticks(range(len(sites_list)), labels=np.array(sites_list).astype(str))
+    # depth graph
+    # axes[1].set_title("Trotterized TFIM TE U err")
+    # axes[1].set_xlabel('Trotter Steps')
+    # axes[1].set_ylabel('TFIM Sites')
+    # im2 = axes[1].imshow(depths_2q)
+    # Show all ticks and label them with the respective list entries
+    # trot_list.append('qiskit')
+    # axes[1].set_xticks(range(len(trot_list)), labels=np.array(trot_list).astype(str),
+    #             rotation=45, ha="right", rotation_mode="anchor")
+    # axes[1].set_yticks(range(len(sites_list)), labels=np.array(sites_list).astype(str))
+    # cbar = fig.colorbar(im2, ax=axes[1])
+    # cbar.set_label('2-qubit gate counts')
+    # axes[1].set_title("Modified HT TFIM 2-q gate counts")
+    # axes[1].set_xlabel('Trotter Steps/Method')
+    # axes[1].set_ylabel('TFIM Sites')
+    # # Loop over data dimensions and create text annotations.
+    # for i in range(len(sites_list)):
+    #     for j in range(len(trot_list)):
+    #         text = axes[1].text(j, i, depths_2q[i][j],
+    #                     ha="center", va="center", color="w")
+    
+    plt.savefig('testing_graphs/heatmap.pdf')
     plt.close()
 
 
