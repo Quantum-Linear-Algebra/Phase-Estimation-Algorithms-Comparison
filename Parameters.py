@@ -3,7 +3,7 @@ from qiskit_aer.noise import NoiseModel
 from scipy.linalg import eigh
 from numpy import ceil, sqrt, zeros, log10, floor, abs, random, linspace
 from scipy.linalg import norm
-from Service import create_hardware_backend
+from Service import create_hardware_backend, empty
 from sys import exit
 import pickle
 from qiskit.quantum_info import Operator, SparsePauliOp
@@ -38,7 +38,13 @@ def check(parameters):
         returns['job_ids'] = job_ids
     else:
         used_variables = ['comp_type', 'sites', 'max_T', 'scaling', 'shifting', 'system',
-                          'max_queries', 'r_scaling', 'const_obs', 'reruns', 'sv', 'shots']
+                          'max_queries', 'r_scaling', 'const_obs', 'reruns', 'sv', 'shots',
+                          'mod_ht']
+        if 'debugging' in parameters and parameters['debugging']:
+            import shutil
+            if not empty('0-Data/Transpiled_Circuits'):
+                shutil.rmtree("0-Data/Transpiled_Circuits/")
+        if 'mod_ht' not in parameters: parameters['mod_ht'] = False
         parameters['max_T'] = float(parameters['max_T'])
         assert(parameters['max_T']>0)
         if 'shots' not in parameters: parameters['shots'] = 1 # parameters['comp_type'] == 'C' or 
@@ -48,8 +54,8 @@ def check(parameters):
             if parameters['comp_type'] != 'C':
                 used_variables.append('method_for_model')
                 parameters['method_for_model'] = parameters['method_for_model'][0].upper()
-                assert(parameters['method_for_model']=='F' or parameters['method_for_model']=='Q')
-                if parameters['method_for_model'] == 'F': used_variables.append('trotter')
+                assert(parameters['method_for_model']=='F' or parameters['method_for_model']=='Q' or parameters['method_for_model']=='T')
+                if parameters['method_for_model'] == 'F' or parameters['method_for_model']=='T': used_variables.append('trotter')
         elif parameters['system'] == 'HUB':
             used_variables.append('t')
             used_variables.append('U')
@@ -278,14 +284,16 @@ def make_filename(parameters, add_shots = False, key='', T = -1, obs=-1, shots=-
     
     string = ''
     if key != '': string += key+'_'
-    if parameters['comp_type'] != 'C': string += 'comp='+parameters['backend'].name
+    if parameters['comp_type'] != 'C':
+        string += 'comp='+parameters['backend'].name
+        string +='_mod_ht='+str(parameters['mod_ht'])[0]
     else: string += 'comp='+parameters['comp_type']
     string +='_sys='+system+'_n='+str(parameters['sites'])
     if system=='TFI':
         if parameters['comp_type'] != 'C':
             method_for_model = parameters['method_for_model']
             string+='_m='+method_for_model
-            if method_for_model == 'F':
+            if method_for_model == 'F' or method_for_model == 'T':
                 string+='_trotter='+str(parameters['trotter'])
         string+='_g='+str(parameters['g'])
     elif system=='SPI':

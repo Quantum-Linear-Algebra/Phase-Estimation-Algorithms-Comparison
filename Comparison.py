@@ -21,16 +21,18 @@ parameters['comp_type']    = 'S' # OPTIONS: Classical, Simulation, Hardware, Job
 parameters['sites']        = 2
 parameters['scaling']      = 3/4*pi
 parameters['shifting']     = 0
-parameters['overlap']      = 1   # the initial state overlap
+# parameters['overlap']      = 1   # the initial state overlap
 # parameters['distribution'] = [.5]+[.5/(2^2-1)]*(2^2-1)
+parameters['mod_ht']       = True
+parameters['debugging']    = True 
 
 # SPECIFIC SYSTEM TYPE
 parameters['system'] = 'TFI' # OPTIONS: TFIM, SPIN, HUBBARD, H_2
 
 # Transverse Field Ising Model Parameters
 parameters['g']                = 4 # magnetic field strength (TFIM)
-parameters['method_for_model'] = 'Q' # OPTIONS: F3C, Qiskit
-parameters['trotter']          = 10 # only used with method_for_model = F3C
+parameters['method_for_model'] = 'Q' # OPTIONS: F3C, Qiskit, Trotter
+# parameters['trotter']          = 2 # only used with method_for_model = F3C, Trotter
 
 # Spin Model Parameters
 parameters['J'] = 0 # coupling strength (SPIN)
@@ -45,19 +47,19 @@ parameters['y'] = 1 # y size of latice (HUBB)
 parameters['distance'] = .5
 
 # General Algorithm Paramters
-parameters['max_T']         = 250
-parameters['shots']         = 10**2
-parameters['max_queries']   = 500 * 10**2
+parameters['max_T']         = 1
+parameters['shots']         = 10**4
+parameters['max_queries']   = 2 * 10**5
 # parameters['num_time_sims'] = 1
 # parameters['num_obs_sims']  = 1
-parameters['reruns']        = 5
+parameters['reruns']        = 4
 
 # NOTE: any parameters not filled out correctly will be set to default values (check displayed parameters)
 parameters['algorithms']    = {}
 
-# parameters['algorithms']['ODMD'] = {}
-# parameters['algorithms']['ODMD']['svd_threshold']   = 10**-1
-# parameters['algorithms']['ODMD']['full_observable'] = True
+parameters['algorithms']['ODMD'] = {}
+parameters['algorithms']['ODMD']['svd_threshold']   = 10**-1
+parameters['algorithms']['ODMD']['full_observable'] = False
 
 # parameters['algorithms']['FDODMD'] = {}
 # parameters['algorithms']['FDODMD']['svd_threshold']   = 10**-1
@@ -69,25 +71,26 @@ parameters['algorithms']    = {}
 # parameters['algorithms']['VQPE']['svd_threshold']     = 10**-1
 # parameters['algorithms']['VQPE']['T']                 = 40
 
-# parameters['algorithms']['UVQPE'] = {}
-# parameters['algorithms']['UVQPE']['svd_threshold']    = 10**-1
+parameters['algorithms']['UVQPE'] = {}
+parameters['algorithms']['UVQPE']['svd_threshold']    = 10**-1
+parameters['algorithms']['ODMD']['full_observable'] = True
 
-# parameters['algorithms']['QCELS'] = {}
+parameters['algorithms']['QCELS'] = {}
 
 # parameters['algorithms']['ML_QCELS'] = {}
 # parameters['algorithms']['ML_QCELS']['time_steps']    = 5
 
-parameters['algorithms']['QMEGS'] = {}
-parameters['algorithms']['QMEGS']['sigma']            = 1
-parameters['algorithms']['QMEGS']['q']                = 0.05
-parameters['algorithms']['QMEGS']['alpha']            = 5
-parameters['algorithms']['QMEGS']['K']                = 2
-parameters['algorithms']['QMEGS']['full_observable']  = True
-parameters['algorithms']['QMEGS']['T']                = 100000
-parameters['algorithms']['QMEGS']['queries']          = 1000 * 10**2
+# parameters['algorithms']['QMEGS'] = {}
+# parameters['algorithms']['QMEGS']['sigma']            = 1
+# parameters['algorithms']['QMEGS']['q']                = 0.05
+# parameters['algorithms']['QMEGS']['alpha']            = 5
+# parameters['algorithms']['QMEGS']['K']                = 2
+# parameters['algorithms']['QMEGS']['full_observable']  = True
+# parameters['algorithms']['QMEGS']['T']                = 100000
+# parameters['algorithms']['QMEGS']['queries']          = 1000 * 10**2
 
 if __name__ == "__main__":
     returns = param.check(parameters)
     data.run(parameters, returns)
-    algo.run(parameters, skipping=10)
+    algo.run(parameters, skipping=parameters['max_queries']/parameters['shots']/20)
     graph_gen.run(parameters, show_std=True)
