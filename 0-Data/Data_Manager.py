@@ -1,4 +1,4 @@
-from qiskit_ibm_runtime import SamplerV2 as Sampler
+from qiskit_ibm_runtime import SamplerV2 as Sampler, EstimatorV2 as Estimator, OptionsV2 as Options
 import pickle
 import sys
 sys.path.append('.')
@@ -13,7 +13,7 @@ from scipy.fft import fft, ifft
 from qiskit import transpile
 from qiskit import qpy
 from qiskit.circuit import QuantumCircuit, QuantumRegister, ClassicalRegister
-from qiskit.quantum_info import Pauli
+from qiskit.quantum_info import Pauli, SparsePauliOp
 from qiskit.circuit.library import UnitaryGate, StatePreparation
 
 from qiskit_aer import AerSimulator
@@ -252,25 +252,25 @@ def create_hamiltonian(parameters, scale=True, show_steps=False):
             print("Lowest energy eigenvalue", min_eigenvalue); print()
     return H, real_E_0
 
-def run_hadamard_tests(controlled_U, statevector, W = 'Re', shots=100):
-    '''
-    Run a transpiled hadamard tests quantum circuit.
+# def run_hadamard_tests(controlled_U, statevector, W = 'Re', shots=100):
+#     '''
+#     Run a transpiled hadamard tests quantum circuit.
 
-    Parameters:
-     - controlled_U: the control operation to check phase of
-     - statevector: a vector to initalize the statevector of
-                    eigenqubits
-     - W: what type of hadamard tests to use (Re or Im)
-     - shots: the number of shots to run the tests with 
+#     Parameters:
+#      - controlled_U: the control operation to check phase of
+#      - statevector: a vector to initalize the statevector of
+#                     eigenqubits
+#      - W: what type of hadamard tests to use (Re or Im)
+#      - shots: the number of shots to run the tests with 
 
-    Returns:
-     - re: the real part of expection value measured
-    '''
-    aer_sim = AerSimulator(noise_model=NoiseModel())
-    trans_qc = create_hadamard_tests(aer_sim, controlled_U, statevector, W = W)
-    counts = aer_sim.run(trans_qc, shots = shots).result().get_counts()
-    exp_val = calculate_exp_vals(counts, shots)
-    return exp_val
+#     Returns:
+#      - re: the real part of expection value measured
+#     '''
+#     aer_sim = AerSimulator(noise_model=NoiseModel())
+#     trans_qc = create_hadamard_tests(aer_sim, controlled_U, statevector, W = W)
+#     counts = aer_sim.run(trans_qc, shots = shots).result().get_counts()
+#     exp_val = calculate_exp_vals(counts, shots)
+#     return exp_val
 
 # def create_hadamard_tests(parameters, backend, U:UnitaryGate, statevector, W = 'Re', modified=True):
 #     '''
@@ -349,13 +349,13 @@ def create_hadamard_tests(parameters, backend, U:UnitaryGate, statevector=[], W 
     qc = QuantumCircuit(qr_ancilla, qr_eigenstate, cr)
     qc.h(qr_ancilla)
     if modified:
-        print(U.to_matrix(), '\n')
+        # print(U.to_matrix(), '\n')
         U_mat = U.to_matrix()
         import scipy; phase = scipy.linalg.logm(U_mat)[0][0].imag
         phase = np.log(complex(U_mat[0][0])).imag
-        print(phase, '\n')
+        # print(phase, '\n')
         qc_init = QuantumCircuit(qr_ancilla, qr_eigenstate)
-        if parameters['system'] == 'TFI' and False:
+        if parameters['system'] == 'TFI':
             if parameters['g'] < 1:
                 # construct GHZ state
                 qc_init.ch(qr_ancilla,qr_eigenstate[0])
@@ -376,7 +376,7 @@ def create_hadamard_tests(parameters, backend, U:UnitaryGate, statevector=[], W 
         qc.x(0)
         qc.rz(phase, qr_ancilla)
     else:
-        print(U.to_matrix(), '\n')
+        # print(U.to_matrix(), '\n')
 
         qc_init = QuantumCircuit(qr_ancilla, qr_eigenstate)
         if parameters['system'] == 'TFI':
@@ -400,10 +400,11 @@ def create_hadamard_tests(parameters, backend, U:UnitaryGate, statevector=[], W 
     if W[0:2].upper() == 'IM' or W[0].upper() == 'S': qc.sdg(qr_ancilla)
     qc.h(qr_ancilla)
     qc.measure(qr_ancilla[0],cr[0])
-    print(qc)
-    # trans_qc = transpile(qc, backend, optimization_level=3)
-    trans_qc = transpile(qc, optimization_level=3, basis_gates=['id','ecr','rz','sx','x'])
-    return trans_qc
+    # print(qc)
+    trans_qc = transpile(qc, backend, optimization_level=3)
+    observable = SparsePauliOp.from_sparse_list([("Z", [0], 1.0)], num_qubits=parameters['sites']+1)
+    isa_observable = observable.apply_layout(trans_qc.layout)
+    return (trans_qc, isa_observable)
 
 
 def calculate_exp_vals(counts, shots):
@@ -574,8 +575,6 @@ def hadamard_tests_circuit_info(parameters, T, observables, ML_QCELS=False, paul
                 pauli = Pauli(pauli_string).to_matrix()
                 mat = pauli@mat
             Unitaries.append(UnitaryGate(mat))
-
-    print('not time steps', time_steps)
     return Unitaries, statevector
 
 def generate_exp_vals(parameters, gausses={}):
@@ -752,8 +751,33 @@ def generate_TFIM_gates(qubits, steps, dt, g, scaling, coupling, trotter, locati
     os.rmdir("TFIM_Operators")
     return gates
 
-# creates necessary circuits if needed
-def get_circuit_data(parameters, time_series, optional_parameters):
+import pickle, zipfile, io
+from qiskit import qpy
+
+def save_circuit(filename, trans_qcs):
+    qcs = []
+    obs = []
+    for trans_qc in trans_qcs:
+        (qc, ob) = trans_qc
+        qcs.append(qc)
+        obs.append(ob)
+    with zipfile.ZipFile(filename+".zip", "w") as zf:
+        buf = io.BytesIO() # make a virtual file in memory
+        qpy.dump(qcs, buf)
+        zf.writestr("circuits.qpy", buf.getvalue())
+        zf.writestr("observables.pkl", pickle.dumps(obs))
+
+def read_circuit(filename):
+    with zipfile.ZipFile(filename+".zip", "r") as zf:
+        buf = io.BytesIO(zf.read("circuits.qpy"))
+        qcs = qpy.load(buf)
+        obs = pickle.loads(zf.read("observables.pkl"))
+    trans_qcs = []
+    for i in range(len(qcs)):
+        trans_qcs.append((qcs[i], obs[i]))
+    return trans_qcs
+
+def setup_circuit_data(parameters, time_series, optional_parameters):
     (time_series_name, T, observables, shots, full_observable) = time_series
 
     # randomly generate data for QMEGS if its needed
@@ -779,9 +803,8 @@ def get_circuit_data(parameters, time_series, optional_parameters):
                 filename = '0-Data/Transpiled_Circuits/'+pauli_string+'_'+name+'_Re.qpy'
                 if empty(filename):
                     print('  Creating file for '+pauli_string+' Real Hadamard tests with observables =', observables)
-                    trans_qcs = transpile_hadamard_tests(parameters, T, observables, optional_parameters['backend'], W='Real', pauli_string=pauli_string)
-                    with open(filename, 'wb') as file:
-                        qpy.dump(trans_qcs, file)
+                    trans_qcs = transpile_hadamard_tests(parameters, T, observables, optional_parameters['backend'], W='Re', pauli_string=pauli_string)
+                    save_circuit(filename, trans_qcs)
                 else:
                     print('  File found for '+pauli_string+' Imaginary Hadamard tests with observables =', observables)
 
@@ -789,8 +812,7 @@ def get_circuit_data(parameters, time_series, optional_parameters):
                 if empty(filename):
                     print('  Creating file for '+pauli_string+' Imaginary Hadamard tests with observables =', observables)
                     trans_qcs = transpile_hadamard_tests(parameters, T, observables, optional_parameters['backend'], W='Im', pauli_string=pauli_string)
-                    with open(filename, 'wb') as file:
-                        qpy.dump(trans_qcs, file)
+                    save_circuit(filename, trans_qcs)
                 else:
                     print('  File found for '+pauli_string+' Imaginary Hadamard tests with  observables =', observables)
         else:
@@ -807,8 +829,7 @@ def get_circuit_data(parameters, time_series, optional_parameters):
             if empty(filename):
                 print('  Creating file for '+time_series_name+' Real Hadamard tests with observables =', observables)
                 trans_qcs = transpile_hadamard_tests(parameters, T, observables, optional_parameters['backend'], W='Re', ML_QCELS=ML_QCELS, gauss=gauss)
-                with open(filename, 'wb') as file:
-                    qpy.dump(trans_qcs, file)
+                save_circuit(filename, trans_qcs)
             else:
                 print('  File found for '+time_series_name+' Real Hadamard tests with observables =', observables)
             if full_observable:
@@ -816,13 +837,14 @@ def get_circuit_data(parameters, time_series, optional_parameters):
                 if empty(filename):
                     print('  Creating file for '+time_series_name+' Imaginary Hadamard tests with observables =', observables)
                     trans_qcs = transpile_hadamard_tests(parameters, T, observables, optional_parameters['backend'], W='Im', ML_QCELS=ML_QCELS, gauss=gauss)
-                    with open(filename, 'wb') as file:
-                        qpy.dump(trans_qcs, file)
+                    save_circuit(filename, trans_qcs)
                 else:
                     print('  File found for Linear Imaginary Hadamard tests with observables =', observables)
         print()
 
+
 def get_exp_vals_data(parameters, optional_parameters):
+    results = []
     if parameters['comp_type'] == 'S' or parameters['comp_type'] == 'H':
         trans_qcs = []
         for time_series in parameters['time_series']:
@@ -837,27 +859,19 @@ def get_exp_vals_data(parameters, optional_parameters):
                         name = make_filename(parameters, T=T, obs=observables, fo=full_observable)
                         filename = '0-Data/Transpiled_Circuits/'+pauli_string+'_'+name+'_Re.qpy'
                         print('  Loading data from file for '+pauli_string+' Real Hadamard tests for run', str(run+1)+'.')
-                        with open(filename, 'rb') as file:
-                            qcs = qpy.load(file)
-                            trans_qcs.append(qcs)
+                        trans_qcs.append(read_circuit(filename))
                         filename = '0-Data/Transpiled_Circuits/'+pauli_string+'_'+name+'_Im.qpy'
                         print('  Loading data from file for '+pauli_string+' Imaginary Hadamard tests for run', str(run+1)+'.')
-                        with open(filename, 'rb') as file:
-                            qcs = qpy.load(file)
-                            trans_qcs.append(qcs)
+                        trans_qcs.append(read_circuit(filename))
                 else:
                     print('  Loading data from file for '+time_series_name+' Real Hadamard tests for run', str(run+1)+'.')
                     name = make_filename(parameters, key=time_series_name, T=T, obs=observables, fo=full_observable)
                     filename = '0-Data/Transpiled_Circuits/'+name+'_Re.qpy'
-                    with open(filename, 'rb') as file:
-                        qcs = qpy.load(file)
-                        trans_qcs.append(qcs)
+                    trans_qcs.append(read_circuit(filename))
                     if full_observable:
                         print('  Loading data from file for '+time_series_name+' Imaginary Hadamard tests for run', str(run+1)+'.')
                         filename = '0-Data/Transpiled_Circuits/'+name+'_Im.qpy'
-                        with open(filename, 'rb') as file:
-                            qcs = qpy.load(file)
-                            trans_qcs.append(qcs)
+                        trans_qcs.append(read_circuit(filename))
             if time_series_name == 'gausts':
                 filename = '0-Data/Transpiled_Circuits/'+name+'_Re.qpy'
                 os.remove(filename)
@@ -950,7 +964,10 @@ def calculate_exp_vals_series(parameters, results, optional_parameters):
 
 def get_results(parameters, trans_qcs, backend, retries=0):
     try:
-        sampler = Sampler(backend)
+        # options = Options()
+        # options.shots = parameters['shots']
+        estimator = Estimator(backend)
+
         if parameters['comp_type'] == 'H':
             job_correct_size = False
             jobs_tqcs = [trans_qcs]
@@ -965,7 +982,7 @@ def get_results(parameters, trans_qcs, backend, retries=0):
                 if job_correct_size:
                     try:
                         for tqcs in jobs_tqcs:
-                            jobs.append(sampler.run(tqcs, shots = parameters['shots']))
+                            jobs.append(estimator.run(tqcs, shots = parameters['shots']))
                     except:
                         job_correct_size = False
                 if not job_correct_size:
@@ -986,17 +1003,20 @@ def get_results(parameters, trans_qcs, backend, retries=0):
             print('Sending Job.')
         if parameters['comp_type'] == 'S':
             print('Running Circuits.')
-            jobs = [sampler.run(trans_qcs, shots=parameters['shots'])]
+            precision = 1/np.sqrt(parameters['shots'])
+            jobs = [estimator.run(trans_qcs, precision = precision)]
         results = []
         for job in jobs:
             for result in job.result():
+                if 'timing' in result.metadata:
+                    print(f"Total Runtime Metadata: {result.metadata['timing']}")
                 results.append(result) 
         return results
     except Exception as e:
         print(e)
-        if retries<100:
-            get_results(parameters, trans_qcs, backend, retries=retries+1)
-        assert(False)
+        assert(retries<100)
+        get_results(parameters, trans_qcs, backend, retries=retries+1)
+        
 
 def calc_all_exp_vals(results, shots, fo=True):
     num_timesteps = len(results)
@@ -1006,8 +1026,7 @@ def calc_all_exp_vals(results, shots, fo=True):
     result = results[0:num_timesteps]
     for j in range(len(result)):
         raw_data = result[j].data
-        cbit = list(raw_data.keys())[0]
-        Res.append(calculate_exp_vals(raw_data[cbit].get_counts(), shots))
+        Res.append(raw_data.evs)
     
     Ims = []
     if fo:
@@ -1015,17 +1034,17 @@ def calc_all_exp_vals(results, shots, fo=True):
         result = results[start:(start+num_timesteps)]
         for j in range(len(result)):
             raw_data = result[j].data
-            cbit = list(raw_data.keys())[0]
-            Ims.append(calculate_exp_vals(raw_data[cbit].get_counts(), shots))
+            Ims.append(raw_data.evs)
     else:
         Ims = [0 for _ in range(len(Res))]
     
     exp_vals = []
     for i in range(len(Res)):
-        exp_vals.append(complex(Res[i], Ims[i]))
+        ev = complex(Res[i], Ims[i])
+        exp_vals.append(ev)
     return exp_vals
 
-def save_exp_vals(all_exp_vals):
+def save_exp_vals(parameters, all_exp_vals):
     try: os.mkdir('0-Data/Expectation_Values')
     except: pass
     for time_series in all_exp_vals:
@@ -1047,10 +1066,10 @@ def run(parameters, returns):
         optional['job_ids'] = job_ids
     
     for time_series in parameters['time_series']:
-        get_circuit_data(parameters, time_series, optional)
+        setup_circuit_data(parameters, time_series, optional)
     results = get_exp_vals_data(parameters, optional)
     all_exp_vals = calculate_exp_vals_series(parameters, results, optional)
-    save_exp_vals(all_exp_vals)
+    save_exp_vals(parameters, all_exp_vals)
     
 # method for saving job ids when code was cancelled
 def save_job_ids_params(parameters):

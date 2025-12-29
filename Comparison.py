@@ -23,7 +23,7 @@ parameters['scaling']      = 3/4*pi
 parameters['shifting']     = 0
 # parameters['overlap']      = 1   # the initial state overlap
 # parameters['distribution'] = [.5]+[.5/(2^2-1)]*(2^2-1)
-parameters['mod_ht']       = True
+parameters['mod_ht']       = False
 parameters['debugging']    = True 
 
 # SPECIFIC SYSTEM TYPE
@@ -47,9 +47,9 @@ parameters['y'] = 1 # y size of latice (HUBB)
 parameters['distance'] = .5
 
 # General Algorithm Paramters
-parameters['max_T']         = 1
-parameters['shots']         = 10**4
-parameters['max_queries']   = 2 * 10**5
+parameters['max_T']         = 2
+parameters['shots']         = 10**5
+parameters['max_queries']   = 100 * 10**5
 # parameters['num_time_sims'] = 1
 # parameters['num_obs_sims']  = 1
 parameters['reruns']        = 4
