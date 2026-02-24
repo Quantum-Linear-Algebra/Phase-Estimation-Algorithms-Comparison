@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from scipy.linalg import expm, eigh, norm, eig
 
 from qiskit import transpile
-from qiskit.quantum_info import Pauli
+from qiskit.quantum_info import Pauli, SparsePauliOp
 from qiskit.circuit import QuantumCircuit, QuantumRegister, ClassicalRegister
 from qiskit.circuit.library import UnitaryGate, StatePreparation
 
@@ -189,45 +189,88 @@ def create_hamiltonian(parameters, scale=True, show_steps=False):
     '''
     scale_factor = parameters['scaling']
     shifting = parameters['shifting']
+    sys = parameters['sys'][0:4].upper()
     if 'sites' in parameters.keys(): qubits = parameters['sites']
     else: qubits = 2
     H = np.zeros((2**qubits, 2**qubits), dtype=np.complex128)
-    g = parameters['g']
-    # construct the Hamiltonian
-    # with Pauli Operators in Qiskit ^ represents a tensor product
-    if show_steps: print("H = ", end='')
-    for i in range(qubits-1):
-        temp = Pauli('')
-        for j in range(qubits):
-            if (j == i or j == i+1):
-                temp ^= Pauli('Z')
-            else:
-                temp ^= Pauli('I')
-        H += -temp.to_matrix()
-        if show_steps: print("-"+str(temp)+" ", end='')
-    # peroidic bound
-    # temp = Pauli('')
-    # for j in range(qubits):
-    #     if (j == 0 or j == qubits-1):
-    #         temp ^= Pauli('Z')
-    #     else:
-    #         temp ^= Pauli('I')
-    # H += -temp.to_matrix()
-    # if show_steps: print("-"+str(temp)+" ", end='')
-    for i in range(qubits):
-        temp = Pauli('')
-        for j in range(qubits):
-            if (j == i):
-                temp ^= Pauli('X')
-            else:
-                temp ^= Pauli('I')
-        H += -g*temp.to_matrix()
-        if show_steps: print("-"+str(g)+"*"+str(temp)+" ", end='')
-    if show_steps: print("\n")
+    if sys=="TFIM":
+        g = parameters['g']
+        # construct the Hamiltonian
+        # with Pauli Operators in Qiskit ^ represents a tensor product
+        if show_steps: print("H = ", end='')
+        for i in range(qubits-1):
+            temp = Pauli('')
+            for j in range(qubits):
+                if (j == i or j == i+1):
+                    temp ^= Pauli('Z')
+                else:
+                    temp ^= Pauli('I')
+            H += -temp.to_matrix()
+            if show_steps: print("-"+str(temp)+" ", end='')
+        # peroidic bound
+        # temp = Pauli('')
+        # for j in range(qubits):
+        #     if (j == 0 or j == qubits-1):
+        #         temp ^= Pauli('Z')
+        #     else:
+        #         temp ^= Pauli('I')
+        # H += -temp.to_matrix()
+        # if show_steps: print("-"+str(temp)+" ", end='')
+        for i in range(qubits):
+            temp = Pauli('')
+            for j in range(qubits):
+                if (j == i):
+                    temp ^= Pauli('X')
+                else:
+                    temp ^= Pauli('I')
+            H += -g*temp.to_matrix()
+            if show_steps: print("-"+str(g)+"*"+str(temp)+" ", end='')
+        if show_steps: print("\n")
+    elif sys == 'HEIS':
+        # jordan-wigner form
+        H_int = [["I"] * qubits for _ in range(3 * (qubits - 1))]
+        for i in range(qubits - 1):
+            H_int[i][i] = "Z"
+            H_int[i][i + 1] = "Z"
+        for i in range(qubits - 1):
+            H_int[qubits - 1 + i][i] = "X"
+            H_int[qubits - 1 + i][i + 1] = "X"
+        for i in range(qubits - 1):
+            H_int[2 * (qubits - 1) + i][i] = "Y"
+            H_int[2 * (qubits - 1) + i][i + 1] = "Y"
+        H_int = ["".join(term) for term in H_int]
+        H_tot = [(term, 1) if term.count("Z") == 2 else (term, 1) for term in H_int]
 
+        H_op = SparsePauliOp.from_list(H_tot)
+        print(H_op)
+        H = H_op.to_matrix()
+    elif sys == 'HUBB':
+        T = parameters['T']
+        V = parameters['V']
+
+        J_x = -T/2 # flip-flop strength for hubb
+        J_z = V/4 # antisotropy coupling strength for hubb
+        B = -V/2 # Z term strength
+
+        # jordan-wigner form
+        terms = []
+        for i in range(qubits - 1):
+            terms.append(( "I"*i + "XX" + "I"*(qubits - i - 2), J_x ))
+            terms.append(( "I"*i + "YY" + "I"*(qubits - i - 2), J_x ))
+
+            terms.append(( "I"*i + "ZZ" + "I"*(qubits - i - 2), J_z ))
+
+        for i in range(qubits):
+            terms.append(( "I"*i + "Z" + "I"*(qubits - i - 1), -B ))
+
+        H_op = SparsePauliOp.from_list(terms)
+        H = H_op.to_matrix()
+    else: assert(False)
     val, vec = eigh(H)
     real_E_0 = val[0]
 
+    largest_eigenvalue = np.max(abs(val)) # use lambda_new when the above code segment
+    unscaled_H = np.copy(H)
     if scale:
         if show_steps:
             print("Original eigenvalues:", val)
@@ -239,7 +282,6 @@ def create_hamiltonian(parameters, scale=True, show_steps=False):
                 print()
         # scale eigenvalues of the Hamiltonian
         n = 2**qubits
-        largest_eigenvalue = np.max(abs(val)) # use lambda_new when the above code segment
         if show_steps: print("Largest Eigenvalue =", largest_eigenvalue)
         parameters["r_scaling"] = largest_eigenvalue/scale_factor
         H *= scale_factor/largest_eigenvalue
@@ -250,7 +292,7 @@ def create_hamiltonian(parameters, scale=True, show_steps=False):
             print("Scaled eigenvectors:\n", vec)
             min_eigenvalue = np.min(val)
             print("Lowest energy eigenvalue", min_eigenvalue); print()
-    return H, real_E_0, largest_eigenvalue
+    return unscaled_H, H, real_E_0, largest_eigenvalue
 
 def create_hardware_backend():
     '''
@@ -329,11 +371,12 @@ def trotter_step_second_order(qc, j, g, dt, n_qubits):
     for q in range(n_qubits):
         rx_on(qc, q, beta_half)
 
-def trotter_evolution(j, g, n_qubits, t=1.0, r=1):
-    # r = number of Trotter steps
+def tfim_trotter_evolution(j, g, n_qubits, t=1.0, num_trotter_steps=1):
+    j=-j
+    g=-g
     qc = QuantumCircuit(n_qubits)
-    dt = t / r
-    for _ in range(r):
+    dt = t / num_trotter_steps
+    for _ in range(num_trotter_steps):
         trotter_step_second_order(qc, j, g, dt, n_qubits)
     return qc
 
@@ -356,7 +399,349 @@ def calculate_exp_vals(counts, shots):
     meas = 2*p0-1
     return meas
 
+def spin_chain_trotter_evolution(n_qubits, t=1, num_time_steps=1, trotter_order=1):
+    dt=t/num_time_steps
+    # Create instruction for rotation about XX+YY-ZZ:
+    Rxyz_circ = QuantumCircuit(2)
+    if trotter_order==1:
+        Rxyz_circ.rxx(dt, 0, 1)
+        Rxyz_circ.ryy(dt, 0, 1)
+        Rxyz_circ.rzz(dt, 0, 1)
+    if trotter_order==2:
+        Rxyz_circ.rxx(dt/2, 0, 1)
+        Rxyz_circ.rzz(dt/2, 0, 1)
+        Rxyz_circ.ryy(dt, 0, 1)
+        Rxyz_circ.rzz(dt/2, 0, 1)
+        Rxyz_circ.rxx(dt/2, 0, 1)
+    Rxyz_instr = Rxyz_circ.to_instruction(label="RXX+YY+ZZ")
+
+    interaction_list = [
+        [[i, i + 1] for i in range(0, n_qubits - 1, 2)],
+        [[i, i + 1] for i in range(1, n_qubits - 1, 2)],
+    ]  # linear chain
+
+    qr = QuantumRegister(n_qubits)
+    trotter_step_circ = QuantumCircuit(qr)
+    for i, color in enumerate(interaction_list):
+        for interaction in color:
+            trotter_step_circ.append(Rxyz_instr, interaction)
+        if i < len(interaction_list) - 1:
+            trotter_step_circ.barrier()
+    reverse_trotter_step_circ = trotter_step_circ.reverse_ops()
+    
+    qc_evol = QuantumCircuit(qr)
+    for step in range(num_time_steps):
+        if step % 2 == 0:
+            qc_evol = qc_evol.compose(trotter_step_circ)
+        else:
+            qc_evol = qc_evol.compose(reverse_trotter_step_circ)
+    # qc_evol.decompose().draw("mpl", fold=-1, scale=0.5)
+    return qc_evol
+
+def hubbard_trotter_evolution(n_qubits, J_x, J_z, B, final_T=1, num_trotter_steps=1):
+    # trotterized circuit for hubbard model
+    times = np.linspace(0, final_T, num_trotter_steps)
+
+    xt = J_x*times
+    zt = J_z*times
+    Bt = B*times
+
+    # Create instruction for rotation about XX+YY-ZZ:
+    instrs = []
+    for i in range(num_trotter_steps):
+        Rxyz_circ = QuantumCircuit(2)
+        Rxyz_circ.rxx(xt[i], 0, 1)
+        Rxyz_circ.ryy(xt[i], 0, 1)
+        Rxyz_circ.rzz(zt[i], 0, 1)
+        Rxyz_instr = Rxyz_circ.to_instruction(label="RXX+YY+ZZ")
+        instrs.append(Rxyz_instr)
+    interaction_list = [
+        [[i, i + 1] for i in range(0, n_qubits - 1, 2)],
+        [[i, i + 1] for i in range(1, n_qubits - 1, 2)],
+    ]  # linear chain
+    t_stp_circs = []
+    r_t_stp_circs = []
+    for j in range(num_trotter_steps):
+        qr = QuantumRegister(n_qubits)
+        trotter_step_circ = QuantumCircuit(qr)
+        for i, color in enumerate(interaction_list):
+            for interaction in color:
+                trotter_step_circ.append(instrs[j], interaction)
+            if i < len(interaction_list) - 1:
+                trotter_step_circ.barrier()
+        for i in range(n_qubits):
+            trotter_step_circ.rz(Bt[j], i)
+        reverse_trotter_step_circ = trotter_step_circ.reverse_ops()
+
+        t_stp_circs.append(trotter_step_circ)
+        r_t_stp_circs.append(reverse_trotter_step_circ)
+
+    qc_evol = QuantumCircuit(qr)
+    for step in range(num_trotter_steps):
+        if step % 2 == 0:
+            qc_evol = qc_evol.compose(t_stp_circs[step])
+        else:
+            qc_evol = qc_evol.compose(r_t_stp_circs[step])
+
+    # qc_evol.decompose().draw("mpl")
+    return qc_evol
+
+# params scaled beforehand
+def trotter_evolution(t, parameters):
+    sys = parameters['sys'][0:4].upper()
+    sites = parameters['sites']
+    num_trotter_steps = parameters['num_trotter_steps']
+    if sys=='TFIM':
+        J = parameters['J']
+        g = parameters['g']
+        qc = tfim_trotter_evolution(J, g, sites, t=-t, num_trotter_steps=num_trotter_steps)
+    elif sys=='HEIS':
+        qc = spin_chain_trotter_evolution(sites, t=t, num_time_steps=num_trotter_steps)
+    elif sys == 'HUBB':
+        T = parameters['T']
+        V = parameters['V']
+
+        J_x = -T/2 # flip-flop strength for hubb
+        J_z = V/4 # antisotropy coupling strength for hubb
+        B = -V/2 # Z term strength
+
+        qc = hubbard_trotter_evolution(sites, J_x, J_z, B, final_T=t, num_trotter_steps=num_trotter_steps)
+    return qc
+
+def r(mat, theta):
+    return expm(-1j*theta/2*mat)
+
+def check_matrices(A, B, precision, disp=True):
+    if not norm(A-B) < precision:
+        if disp:
+            print('Failed Check')
+            print('A', A)
+            print('B', B)
+            print('norm', norm(A-B))
+        return False
+    return True
+
+def check_spectrum(A, B, precision):
+    if check_matrices(A, A.conj().T, 1E-12, disp=False):
+        eigval_A,_ = eigh(A)
+    else:
+        eigval_A,_ = eig(A)
+    phases_A = np.sort([-np.log(eigval).imag for eigval in eigval_A])
+
+    if check_matrices(B, B.conj().T, 1E-12, disp=False):
+        eigval_B,_ = eigh(B)
+    else:
+        eigval_B,_ = eig(B)
+    eigval_B,_ = eig(B)
+    phases_B = np.sort([-np.log(eigval).imag for eigval in eigval_B])
+    diff = norm(phases_A-phases_B)
+    if  diff < precision:
+        return True
+    else:
+        print('phases:')
+        print(phases_A)
+        print(phases_B)
+        print('diff =', diff)
+
+
+def exact_trotter_matrix_TFIM(sites, mag_field_mat, g, coupling_mat, J, scaled_t, trotter_steps):
+    full_mat = np.eye(2**sites, dtype=complex)
+    dt = scaled_t / trotter_steps
+    for _ in range(trotter_steps):
+        beta_half = g * (dt/2)
+        alpha = J * dt
+        part1 = 1
+        for _ in range(sites):
+            part1 = np.kron(part1, r(mag_field_mat, 2*beta_half))
+        part2 = np.eye(2**sites, dtype=complex)
+        for qubit in range(sites-1):
+            temp = 1
+            for index in range(sites-1):
+                if index == qubit:
+                    mat = r(np.kron(coupling_mat, coupling_mat), 2*alpha)
+                else:
+                    mat = np.eye(2, dtype=complex)
+                temp = np.kron(temp, mat)
+            part2 @= temp
+        part3 = 1
+        for _ in range(sites):
+            part3 = np.kron(part3, r(mag_field_mat, 2*beta_half))
+        trotter_step_mat = part1 @ part2 @ part3
+        full_mat @= trotter_step_mat
+    return full_mat
+
+def exact_trotter_matrix_spin(sites, coupling_mats, scaled_t, time_steps, trotter_order=1):
+    full_mat = np.eye(2**sites, dtype=complex)
+    dt = scaled_t / time_steps
+
+    Rxyz_mat = np.eye(4, dtype=complex)
+    if trotter_order==1:
+        for mat in coupling_mats:
+            Rxyz_mat @= r(np.kron(mat,mat), dt)
+    elif trotter_order==2:
+        # loop to have symmetric ordering
+        for index in range(len(coupling_mats)):
+            mat = coupling_mats[index]
+            if index != len(coupling_mats)-1:
+                Rxyz_mat @= r(np.kron(mat,mat), dt/2)
+            else:
+                Rxyz_mat @= r(np.kron(mat,mat), dt) # inflection
+        for i in range(len(coupling_mats)-1):
+            index = len(coupling_mats)-2-i
+            mat = coupling_mats[index]
+            Rxyz_mat @= r(np.kron(mat,mat), dt/2)
+    
+    interaction_list = [
+        [[i, i + 1] for i in range(0, sites - 1, 2)],
+        [[i, i + 1] for i in range(1, sites - 1, 2)],
+    ]  # linear chain
+    
+    forward_trotter_step_mat = np.eye(2**sites, dtype=complex)
+    reverse_trotter_step_mat = np.eye(2**sites, dtype=complex)
+    for _, color in enumerate(interaction_list):
+        for interaction in color:
+            pair_mat = 1
+            for site in range(sites-1):
+                if site == interaction[0]:
+                    pair_mat = np.kron(pair_mat, Rxyz_mat)
+                else:
+                    pair_mat = np.kron(pair_mat, np.eye(2))
+            forward_trotter_step_mat @= pair_mat
+            reverse_trotter_step_mat = pair_mat@reverse_trotter_step_mat
+    full_mat = np.eye(2**sites, dtype=complex)
+    for step in range(time_steps):
+        if step % 2 == 0:
+            full_mat @= forward_trotter_step_mat
+        else:
+            full_mat @= reverse_trotter_step_mat
+    return full_mat
+
+def run_tests():
+    # t = .0017 # first order max T to get 10^-3
+    t = .00171
+    trotter_order = 2
+    parameters = {}
+    parameters['sites']    = 2
+    parameters['scaling']  = 1
+    parameters['shifting'] = 0
+
+    # create_hamiltonian_tests
+    H_datas = {}
+    parameters['sys']      = "TFIM"
+    parameters['g']        = 4
+    parameters['J']        = 1 
+    H, scaled_H, E_0, E_L = create_hamiltonian(parameters, scale=True, show_steps=False)
+    scaled_t = t * parameters['scaling']/E_L
+    U_t = expm(-1j*H*scaled_t)
+    U_H = expm(-1j*scaled_H*t)
+    assert(check_matrices(U_t, U_H, 1E-8))
+    H_datas['TFIM'] = [np.copy(U_t), E_0, E_L, scaled_t]
+
+    parameters['sys']      = "HEIS"
+    H, scaled_H, E_0, E_L = create_hamiltonian(parameters, scale=True, show_steps=False)
+    scaled_t = t * parameters['scaling']/E_L
+    U_t = expm(-1j*H*scaled_t)
+    U_H = expm(-1j*scaled_H*t)
+    assert(check_matrices(U_t, U_H, 1E-8))
+    H_datas['HEIS'] = [np.copy(U_t), E_0, E_L, scaled_t]
+
+    parameters['sys']      = "HUBB"
+    parameters['T']        = 1
+    parameters['V']        = 1.5
+    H, scaled_H, E_0, E_L = create_hamiltonian(parameters, scale=True, show_steps=False)
+    scaled_t = t * parameters['scaling']/E_L
+    U_t = expm(-1j*H*scaled_t)
+    U_H = expm(-1j*scaled_H*t)
+    assert(check_matrices(U_t, U_H, 1E-8))
+    H_datas['HUBB'] = [np.copy(U_t), E_0, E_L, scaled_t]
+
+    X = np.array([[0, 1],
+                  [1, 0]])
+    Y = np.array([[0, -1j],
+                  [1j,  0]])
+    Z = np.array([[1,  0],
+                  [0, -1]])
+
+    # tfim_trotter_evolution
+    print("STARTING TFIM TESTS")
+    scaled_t = H_datas['TFIM'][3]
+    
+    trotter_circ = tfim_trotter_evolution(parameters['J'], parameters['g'], parameters['sites'], t=scaled_t, num_trotter_steps=2)
+    trotter_circ_mat = Operator(trotter_circ).data
+
+    # circuit correctness check
+    print("\tCORRECTNESS CHECK")
+    exact_trotter_mat = exact_trotter_matrix_TFIM(parameters['sites'], X, parameters['g'], Z, parameters['J'], -scaled_t, 2)
+    assert(check_matrices(trotter_circ_mat, exact_trotter_mat, 1E-12))
+    assert(check_spectrum(trotter_circ_mat, exact_trotter_mat, 1E-12))
+    print("\tCORRECTNESS CHECK COMPLETED")
+
+
+    # check precision
+    print("\tPRECISION CHECK")
+    assert(check_matrices(trotter_circ_mat, H_datas['TFIM'][0], 1E-2))
+    assert(check_spectrum(trotter_circ_mat, H_datas['TFIM'][0], 1E-2))
+
+    trotter_circ = tfim_trotter_evolution(parameters['J'], parameters['g'], parameters['sites'], t=scaled_t, num_trotter_steps=20)
+    trotter_circ_mat = Operator(trotter_circ).data
+    assert(check_matrices(trotter_circ_mat, H_datas['TFIM'][0], 1E-4))
+    assert(check_spectrum(trotter_circ_mat, H_datas['TFIM'][0], 1E-4))
+
+    trotter_circ = tfim_trotter_evolution(parameters['J'], parameters['g'], parameters['sites'], t=scaled_t, num_trotter_steps=2000)
+    trotter_circ_mat = Operator(trotter_circ).data
+    assert(check_matrices(trotter_circ_mat, H_datas['TFIM'][0], 1E-8))
+    assert(check_spectrum(trotter_circ_mat, H_datas['TFIM'][0], 1E-8))
+
+    print("COMPLETED TFIM TESTS")
+
+    # heis_trotter_evolution
+    print("STARTING SPIN CHAIN TESTS")
+    parameters['sys']      = "HEIS"
+    scaled_t = H_datas['HEIS'][3]
+
+    trotter_circ = spin_chain_trotter_evolution(parameters['sites'], t=scaled_t, num_time_steps=1)
+    trotter_circ_mat = Operator(trotter_circ).data
+
+    # circuit correctness check
+    print("\tCORRECTNESS CHECK")
+    exact_trotter_mat = exact_trotter_matrix_spin(parameters['sites'], [X,Z,Y], scaled_t, 1, trotter_order=trotter_order)
+    assert(check_matrices(trotter_circ_mat, exact_trotter_mat, 1E-12))
+    assert(check_spectrum(trotter_circ_mat, exact_trotter_mat, 1E-12))
+
+    # precision check
+    print("\tPRECISION CHECK")
+    trotter_circ = spin_chain_trotter_evolution(parameters['sites'], t=scaled_t, num_time_steps=1, trotter_order=trotter_order)
+    trotter_circ_mat = Operator(trotter_circ).data
+    assert(check_matrices(trotter_circ_mat, H_datas['HEIS'][0], 1E-3))
+    assert(check_spectrum(trotter_circ_mat, H_datas['HEIS'][0], 1E-3))
+
+    print("COMPLETE SPIN CHAIN TESTS")
+
+    # # hubb_trotter_evolution
+    # print("STARTING HUBBARD TESTS")
+    # parameters['sys']      = "HUBB"
+    # scaled_t = H_datas['HUBB'][3]
+
+    # T = parameters['T']
+    # V = parameters['V']
+
+    # J_x = -T/2 # flip-flop strength for hubb
+    # J_z = V/4 # antisotropy coupling strength for hubb
+    # B = -V/2 # Z term strength
+
+    # trotter_circ = hubbard_trotter_evolution(parameters['sites'], J_x, J_z, B, final_T=scaled_t, num_trotter_steps=2)
+    # trotter_circ_mat = Operator(trotter_circ).data
+    # assert(check_matrices(trotter_circ_mat, H_datas['HUBB'][0], 1E-2))
+    # assert(check_spectrum(trotter_circ_mat, H_datas['HUBB'][0], 1E-2))
+    # print("COMPLETED HUBBARD TESTS")
+
+    exit(1)
+
 if __name__ == '__main__':
+    np.set_printoptions(linewidth=300, suppress=True)
+    run_tests()
+    
+
     use_hardware = False
     if use_hardware:
         backend = create_hardware_backend()
@@ -365,20 +750,14 @@ if __name__ == '__main__':
     sampler = Sampler(backend)
 
     t = 1
-    # shots = 1000
-    # Trotter circuit
-    # trot_j = parameters['scaling']/E_L
-    # trot_g = parameters['g']*parameters['scaling']/E_L
-
-    sites_list = np.arange(2,8,1)
-    # trot_list = [int((x//2*2)+1) for x in np.linspace(2,14,len(sites_list)).astype(int)]
-    trot_list = np.arange(2,10,1).tolist()
+    sites_list = np.arange(2,7,1)
+    trot_list = np.arange(2,11,1).tolist()
 
     print('sites list', sites_list)
     print('trot list', trot_list)
 
     norm_diffs = []
-    # depths_2q = []
+    depths_2q = []
     # qiskit_depths = []
     spectral_diffs = []
     spectral_sorted_diffs = []
@@ -387,106 +766,132 @@ if __name__ == '__main__':
         spectral_diffs.append([])
         spectral_sorted_diffs.append([])
 
-        # depths_2q.append([])
+        depths_2q.append([])
         print('Generating data for',sites_list[i],'sites')
 
         # create example circuit
         parameters = {}
+        parameters['sys']      = "TFIM"
         parameters['sites']    = sites_list[i]
-        parameters['scaling']  = 3*pi/4
+        parameters['scaling']  = 1
         parameters['shifting'] = 0
-        parameters['g']        = 4 
-        H, E_0, E_L = create_hamiltonian(parameters, show_steps=False)
+        #TFIM
+        parameters['g']        = 4
+        parameters['J']        = 1 
+        #HUBB
+        parameters['T']        = 1
+        parameters['V']        = 1
+
+        unscaled_H, H, E_0, E_L = create_hamiltonian(parameters, scale=True)
+        scaled_t = t*(parameters['scaling']/E_L)
+        print(scaled_t)
+
+        U1 = expm(-1j*unscaled_H*scaled_t)
         U = expm(-1j*H*t)
-        U_eigval, _ = eig(U)
+        print(H)
+        assert(norm(U1 - U) < 1E-8) 
+        if norm(U-U.T) < 1E-8:
+            U_eigval, _ = eigh(U)
+        else:
+            U_eigval, _ = eig(U)
         U_phases = [-np.log(eigval).imag for eigval in U_eigval]
         U_phases_sorted = np.sort(U_phases)
-        # print(U_phases)
-        # qc_qiskit = create_hadamard_tests(parameters, backend, U, modified=True)
-        # trans_qc_qiskit = transpile(qc_qiskit, optimization_level=3, basis_gates=['id','ecr','rz','sx','x']) # just rpi_rensselaer basis gates
-        # qiskit_depths.append(qc_qiskit.count_ops().get('ecr'))
-        trot_j = parameters['scaling']/E_L
-        trot_g = parameters['g']*parameters['scaling']/E_L
+        
         for j in range(len(trot_list)):
             print('  trotter steps:', trot_list[j])
-            qc_trot_unitary = trotter_evolution(-trot_j, -trot_g, sites_list[i], t=t, r=trot_list[j]) # increase r to reduce Trotter error
-            trans_qc_trot = transpile(qc_trot_unitary, optimization_level=3, basis_gates=['id','ecr','rz','sx','x']) # just rpi_rensselaer basis gates
+            parameters['num_trotter_steps'] = trot_list[j]
+            qc_trot_unitary = trotter_evolution(-scaled_t, parameters)
+            check = Operator(qc_trot_unitary).data
+            unscaled_time_test = expm(-1j*H*t)
+            print(check, "\n")
+            print(unscaled_time_test)
+            # assert(norm(check - unscaled_time_test) < 1E-8)
+            scaled_time_test = expm(-1j*unscaled_H*scaled_t)
+            # print(test)
+            # assert(norm(check - scaled_time_test) < 1E-8)
+            # print(qc_trot_unitary)
+            
+            trans_qc_trot = qc_trot_unitary
+            # trans_qc_trot = transpile(qc_trot_unitary, optimization_level=3, basis_gates=['id','ecr','rz','sx','x']) # just rpi_rensselaer basis gates
             trot_mat = Operator(trans_qc_trot).data
+            
             norm_diffs[i].append(np.linalg.norm(trot_mat-U, ord=2))
 
             trot_eigval, _ = eig(trot_mat)
             trot_phases = [-np.log(eigval).imag for eigval in trot_eigval]
-            
-            sum = 0
-            for phase_index in range(len(U_phases)):
-                sum += abs(trot_phases[phase_index]-U_phases[phase_index])
-            spectral_diffs[i].append(sum)
 
             trot_phases_sorted = np.sort(trot_phases)
+            small_diff = abs(U_phases_sorted[0]-trot_phases_sorted[0])
             sum = 0
             for phase_index in range(len(U_phases_sorted)):
                 sum += abs(trot_phases_sorted[phase_index]-U_phases_sorted[phase_index])
-            spectral_sorted_diffs[i].append(sum/len(U_phases_sorted))
+            spectral_sorted_diffs[i].append(sum)
             
             # qc_trot = create_trot_ht(parameters, backend, qc_trot_unitary, modified=True)
             # qiskit_mat = Operator(qc_qiskit).data
             # trans_qc_trot = transpile(qc_trot, optimization_level=3, basis_gates=['id','ecr','rz','sx','x']) # just rpi_rensselaer basis gates
             # print(' gate counts:', trans_qc_trot.count_ops())
-            # depths_2q[i].append(trans_qc_trot.count_ops().get('ecr'))
+            gate_count = trans_qc_trot.num_nonlocal_gates()
+            depths_2q[i].append(gate_count)
         
     # print(norm_diffs)
     # print(spectral_diffs)
     # print(depths_2q)
     # for i in range(len(depths_2q)): depths_2q[i].append(qiskit_depths[i])
 
-    fig, axes = plt.subplots(1, 2, figsize=(2*len(trot_list),len(sites_list)))
+    size = 2
+    fig, axes = plt.subplots(1, size, figsize=(2*len(trot_list),len(sites_list)))
+    fig.suptitle(parameters['sys'])
+    if size==1: axes = [axes]
+    index = 0
 
     colorbar_scale = LogNorm(vmin=10**0, vmax=10**-5)
-    im1 = axes[0].imshow(norm_diffs, norm=colorbar_scale)#LogNorm(vmin=np.min(norm_diffs), vmax=np.max(norm_diffs)))
+    axe = axes[index]
+    im1 = axe.imshow(norm_diffs, norm=colorbar_scale)#LogNorm(vmin=np.min(norm_diffs), vmax=np.max(norm_diffs)))
     for ax in axes:
-        ax.set_xticks(range(len(trot_list)), labels=np.array(trot_list).astype(str),
+        axe.set_xticks(range(len(trot_list)), labels=np.array(trot_list).astype(str),
                     rotation=45, ha="right", rotation_mode="anchor")
-        ax.set_yticks(range(len(sites_list)), labels=np.array(sites_list).astype(str))
-
-    # Loop over data dimensions and create text annotations.
-    # for i in range(len(sites_list)):
-    #     for j in range(len(trot_list)):
-    #         axes[0].text(j, i, f'{np.log(norm_diffs[i][j]):1.2f}', ha="center", va="center", color="w")
+        axe.set_yticks(range(len(sites_list)), labels=np.array(sites_list).astype(str))
+    index+=1
     cbar = fig.colorbar(im1, ax=axes[0])
     cbar.set_label('2-norm difference')
 
-    
-    # # print(np.min(spectral_diffs), np.max(spectral_diffs))
-    # spectrum_diff_ax = axes[1].imshow(spectral_diffs, norm=colorbar_scale)#LogNorm(vmin=np.min(spectral_diffs), vmax=np.max(spectral_diffs)))
-    # cbar = fig.colorbar(spectrum_diff_ax, ax=axes[1])
-    # cbar.set_label('Phase difference for entire spectrum')
-
-    spectrum_sorted_diff_ax = axes[1].imshow(spectral_sorted_diffs, norm=colorbar_scale)#LogNorm(vmin=np.min(spectral_sorted_diffs), vmax=np.max(spectral_sorted_diffs)))
-    cbar = fig.colorbar(spectrum_sorted_diff_ax, ax=axes[1])
-    cbar.set_label('Phase difference for sorted spectrum')
-    # axes[1].set_xticks(range(len(trot_list)), labels=np.array(trot_list).astype(str),
-    #             rotation=45, ha="right", rotation_mode="anchor")
-    # axes[1].set_yticks(range(len(sites_list)), labels=np.array(sites_list).astype(str))
-    # depth graph
-    # axes[1].set_title("Trotterized TFIM TE U err")
-    # axes[1].set_xlabel('Trotter Steps')
-    # axes[1].set_ylabel('TFIM Sites')
-    # im2 = axes[1].imshow(depths_2q)
-    # Show all ticks and label them with the respective list entries
-    # trot_list.append('qiskit')
-    # axes[1].set_xticks(range(len(trot_list)), labels=np.array(trot_list).astype(str),
-    #             rotation=45, ha="right", rotation_mode="anchor")
-    # axes[1].set_yticks(range(len(sites_list)), labels=np.array(sites_list).astype(str))
-    # cbar = fig.colorbar(im2, ax=axes[1])
-    # cbar.set_label('2-qubit gate counts')
-    # axes[1].set_title("Modified HT TFIM 2-q gate counts")
-    # axes[1].set_xlabel('Trotter Steps/Method')
-    # axes[1].set_ylabel('TFIM Sites')
     # # Loop over data dimensions and create text annotations.
     # for i in range(len(sites_list)):
     #     for j in range(len(trot_list)):
-    #         text = axes[1].text(j, i, depths_2q[i][j],
-    #                     ha="center", va="center", color="w")
+    #         axes[0].text(j, i, f'{np.log(norm_diffs[i][j]):1.2f}', ha="center", va="center", color="w")
+
+    # axe = axes[index]
+    # spectrum_sorted_diff_ax = axe.imshow(spectral_sorted_diffs, norm=colorbar_scale)#LogNorm(vmin=np.min(spectral_sorted_diffs), vmax=np.max(spectral_sorted_diffs)))
+    # cbar = fig.colorbar(spectrum_sorted_diff_ax, ax=axe)
+    # cbar.set_label('Phase difference for sorted spectrum')
+    # index += 1
+
+    axe = axes[index]
+    axe.set_xticks(range(len(trot_list)), labels=np.array(trot_list).astype(str),
+                rotation=45, ha="right", rotation_mode="anchor")
+    axe.set_yticks(range(len(sites_list)), labels=np.array(sites_list).astype(str))
+    # depth graph
+    axe.set_title("Trotterized TFIM TE U err")
+    axe.set_xlabel('Trotter Steps')
+    axe.set_ylabel('TFIM Sites')
+    im2 = axe.imshow(depths_2q)
+    # Show all ticks and label them with the respective list entries
+    # trot_list.append('qiskit')
+    axe.set_xticks(range(len(trot_list)), labels=np.array(trot_list).astype(str),
+                rotation=45, ha="right", rotation_mode="anchor")
+    axe.set_yticks(range(len(sites_list)), labels=np.array(sites_list).astype(str))
+    cbar = fig.colorbar(im2, ax=axe)
+    cbar.set_label('2-qubit gate counts')
+    axe.set_title("Modified HT TFIM 2-q gate counts")
+    axe.set_xlabel('Trotter Steps/Method')
+    axe.set_ylabel('TFIM Sites')
+    # Loop over data dimensions and create text annotations.
+    for i in range(len(sites_list)):
+        for j in range(len(trot_list)):
+            text = axe.text(j, i, depths_2q[i][j],
+                        ha="center", va="center", color="w")
+    index += 1
     
     plt.savefig('testing_graphs/heatmap.pdf')
     plt.close()
