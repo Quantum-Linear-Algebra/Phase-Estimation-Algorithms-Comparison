@@ -17,8 +17,9 @@ from qiskit_ibm_runtime import QiskitRuntimeService as QRS
 from qiskit.quantum_info import Operator, Statevector 
 from matplotlib.colors import LogNorm
 
-def rayleigh(M, x):
-    return ((x.conj().T @ M @ x) / (x.conj().T @ x))[0][0] # turn it into a scalar
+def rayleigh(M, x0, x):
+    print(x0.conj().T @ x)
+    return ((x.conj().T @ M @ x) / (x0.conj().T @ x))[0][0] # turn it into a scalar
 
 # def lowest_energy(H):
 #     do:
@@ -858,7 +859,8 @@ def rayleigh_vs_t(qubits):
     parameters['T']        = 1
     parameters['V']        = 1.5
 
-    unscaled_H, H, E_0, E_L = create_hamiltonian(parameters, scale=True)
+    H, _, _, _ = create_hamiltonian(parameters, scale=True)
+    H_eigs, _ = eig(H)
     E_real = get_ground_hubb(parameters)
     print('real lowest energy:', E_real)
     precision = 1E-12
@@ -872,47 +874,93 @@ def rayleigh_vs_t(qubits):
     zero = [[1],[0]]
     init = [1]
     for i in range(parameters['qubits']):
-        if i == parameters['qubits'] // 2-1:
+        if i == parameters['qubits'] // 2:
             init = np.kron(one, init)
         else:
             init = np.kron(zero, init)
+    # rng = np.random.default_rng(1234)
+    # init = rng.normal(size=2**parameters['qubits']) 
+    # init = init / np.linalg.norm(init)
+    # init = np.array([[i] for i in init])
+    sv = np.copy(init)
+    dt = 0.01
+    i = 1
+    final_Ts = np.linspace(100,5000,100)
+    E_ests = []
+    time_evol = expm(-1.0j*H*dt)
+    for final_T in final_Ts:
+        t_list = []
+        signal = []
+        while i*dt < final_T:
+            # for site in sites
+            
+            # qc_trot_unitary = get_hubb(t, qubits, 1, parameters['T'], parameters['V'])
+            # time_evol = Operator(qc_trot_unitary).data
 
-    # print(init)
-    # print(init)
-    # print(init)
-    diff = np.inf
-    t = 0
-    i = 0
-    E_test_list = []
-    t_list = []
-    while diff > precision*10 and i < 1000:
-        # for site in sites
-        
-        qc_trot_unitary = get_hubb(t, qubits, 1, parameters['T'], parameters['V'])
-        time_evol = Operator(qc_trot_unitary).data
-        # time_evol = expm(-1.0j*unscaled_H*t) 
+            sv = time_evol @ sv
+            # E_test = rayleigh(H, init, sv)
+            overlap = (init.conj().T @ sv)[0][0]
+            
+            t_list.append(dt*i)
+            # diff = abs(E_test-E_real)
+            # signal.append(diff)
+            signal.append(overlap)
+            # print(E_test)
+            i += 1
+        # t_lists.append(t_list)
+        # signals.append(signal)
 
-        sv = time_evol @ init
-        print(sv)
-        E_test = rayleigh(unscaled_H, sv)
-        
-        t_list.append(t)
-        diff = abs(E_test-E_real)
-        E_test_list.append(diff)
-        # print(E_test)
-        i += 1
-        t += 1
+        # Windowing
+        window = np.hanning(len(signal))
+        signal *= window
 
-    
-    plt.plot(t_list, E_test_list, label = 'Energy Difference')
-    plt.plot(t_list, [1E-3] * len(t_list), label='chemical accuracy')
-    # plt.yscale('log')
+        # Zero padding
+        nfft = 4 * len(signal)
+
+        fft_vals = np.fft.fft(signal, n=nfft)
+        freqs = np.fft.fftfreq(nfft, d=dt)
+
+        omega = 2 * np.pi * freqs
+
+        fft_vals = np.fft.fftshift(fft_vals)
+        omega = np.fft.fftshift(omega)
+
+        energy_axis = -omega
+        spectrum = np.abs(fft_vals)
+
+        idx = np.argsort(energy_axis)
+        energy_axis = energy_axis[idx]
+        spectrum = spectrum[idx]
+
+        mask = (energy_axis >= np.min(H_eigs) - 0.2) & (energy_axis <= np.max(H_eigs) + 0.2)
+        scaled_spec = spectrum[mask]/max(spectrum[mask])
+        # plt.plot(energy_axis[mask], scaled_spec, label=fr"$T_{{\max}}={final_T}$")
+        max_ids = sp.signal.find_peaks(scaled_spec, height = 0.5)[0]
+
+        E_est_idx = max_ids[0]
+        E_est = energy_axis[mask][E_est_idx]
+        E_ests.append(E_est)
+
+    # Exact energies
+    # for j, e in enumerate(H_eigs):
+    #     plt.axvline(e, linestyle="--", alpha=0.5,
+    #                 label="exact energies" if j == 0 else None)
+    # plt.plot()
+    # plt.xlabel("Energy")
+    # plt.ylabel("Spectral weight")
+    # plt.legend()
+    # plt.tight_layout()
+    # plt.savefig('testing_graphs/rayleigh_vs_t.pdf')
+
+    plt.plot(final_Ts, abs(E_ests - E_real), label = 'Energy Diff')
+    plt.plot(final_Ts, [1E-3] * len(final_Ts), label='chemical accuracy')
+    plt.yscale('log')
     plt.title('Rayleigh vs t')
     plt.xlabel('time')
     plt.ylabel('Energy Difference')
     plt.legend()
     plt.savefig('testing_graphs/rayleigh_vs_t.pdf')
-    return t_list[-1]
+    # return t_list[-1]
     
 
 def get_ground_hubb(parameters):
