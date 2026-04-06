@@ -18,7 +18,6 @@ from qiskit.quantum_info import Operator, Statevector
 from matplotlib.colors import LogNorm
 
 def rayleigh(M, x0, x):
-    print(x0.conj().T @ x)
     return ((x.conj().T @ M @ x) / (x0.conj().T @ x))[0][0] # turn it into a scalar
 
 # def lowest_energy(H):
@@ -848,6 +847,24 @@ def get_total_number_operator(L):
         
     return N_total
 
+def quadratic_peak(x, y, i):
+    """Sub-bin peak location from 3-point quadratic interpolation."""
+    if i <= 0 or i >= len(y) - 1:
+        return x[i]
+
+    y1, y2, y3 = y[i - 1], y[i], y[i + 1]
+    x1, x2, x3 = x[i - 1], x[i], x[i + 1]
+
+    denom = y1 - 2.0 * y2 + y3
+    if abs(denom) < 1e-14:
+        return x2
+
+    dx = x2 - x1
+    delta = 0.5 * (y1 - y3) / denom
+    delta = np.clip(delta, -1.0, 1.0)
+
+    return x2 + delta * dx
+
 def rayleigh_vs_t(qubits):
     # create example circuit
     parameters = {}
@@ -859,16 +876,15 @@ def rayleigh_vs_t(qubits):
     parameters['T']        = 1
     parameters['V']        = 1.5
 
-    H, _, _, _ = create_hamiltonian(parameters, scale=True)
+    H, _, _, _ = create_hamiltonian(parameters, scale=True) # unscaled, scaled
     H_eigs, _ = eig(H)
     E_real = get_ground_hubb(parameters)
     print('real lowest energy:', E_real)
     precision = 1E-12
 
-    # N = get_total_number_operator(parameters['qubits']//2)
-    # unscaled_H -= precision*N
-    # eig_val, eig_vec = eig(unscaled_H)
-    # init = [[i] for i in eig_vec[:,3]]
+    N = get_total_number_operator(parameters['qubits']//2)
+    H -= precision*N
+    eig_val, eig_vec = eig(H)
 
     one = [[0],[1]]
     zero = [[1],[0]]
@@ -878,25 +894,33 @@ def rayleigh_vs_t(qubits):
             init = np.kron(one, init)
         else:
             init = np.kron(zero, init)
+
     # rng = np.random.default_rng(1234)
     # init = rng.normal(size=2**parameters['qubits']) 
     # init = init / np.linalg.norm(init)
+    # init = eig_vec[:,3]
     # init = np.array([[i] for i in init])
+
+    for i in range(len(eig_val)):
+        particle_num = eig_vec[:,i].conj().T@(N@eig_vec[:,i])
+        if np.isclose(particle_num,1):
+            prob = abs(eig_vec[:,i].conj().T@init)**2
+            print(i,'overlap:', prob)
+            print('eig:', eig_val[i])
     sv = np.copy(init)
     dt = 0.01
-    i = 1
-    final_Ts = np.linspace(100,5000,100)
+    final_Ts = np.linspace(1,500,100)
+    final_Ts = np.ceil(final_Ts)
     E_ests = []
+    # qc_trot_unitary = get_hubb(t, qubits, 1, parameters['T'], parameters['V'])
+    # time_evol = Operator(qc_trot_unitary).data
     time_evol = expm(-1.0j*H*dt)
+    plt.figure(1)
     for final_T in final_Ts:
         t_list = []
         signal = []
-        while i*dt < final_T:
-            # for site in sites
-            
-            # qc_trot_unitary = get_hubb(t, qubits, 1, parameters['T'], parameters['V'])
-            # time_evol = Operator(qc_trot_unitary).data
-
+        i = 1
+        while i*dt <= final_T:
             sv = time_evol @ sv
             # E_test = rayleigh(H, init, sv)
             overlap = (init.conj().T @ sv)[0][0]
@@ -909,13 +933,12 @@ def rayleigh_vs_t(qubits):
             i += 1
         # t_lists.append(t_list)
         # signals.append(signal)
-
         # Windowing
         window = np.hanning(len(signal))
         signal *= window
 
         # Zero padding
-        nfft = 4 * len(signal)
+        nfft = 8*len(signal)
 
         fft_vals = np.fft.fft(signal, n=nfft)
         freqs = np.fft.fftfreq(nfft, d=dt)
@@ -933,33 +956,61 @@ def rayleigh_vs_t(qubits):
         spectrum = spectrum[idx]
 
         mask = (energy_axis >= np.min(H_eigs) - 0.2) & (energy_axis <= np.max(H_eigs) + 0.2)
-        scaled_spec = spectrum[mask]/max(spectrum[mask])
-        # plt.plot(energy_axis[mask], scaled_spec, label=fr"$T_{{\max}}={final_T}$")
-        max_ids = sp.signal.find_peaks(scaled_spec, height = 0.5)[0]
-
+        # mask = (energy_axis >= np.min(E_real) - 0.3) & (energy_axis <= np.min(E_real) + 0.3)
+        spectrum_local = spectrum[mask]/max(spectrum[mask])
+        energy_local = energy_axis[mask]
+        plt.plot(energy_local, abs(spectrum_local), label=fr"$T_{{\max}}={final_T}$")
+        max_ids = sp.signal.find_peaks(spectrum_local, height = 0.5)[0]
         E_est_idx = max_ids[0]
-        E_est = energy_axis[mask][E_est_idx]
-        E_ests.append(E_est)
+        E_ests.append(energy_local[E_est_idx])
+
+        # ---Dr. Faulstich Peak---
+        # if len(energy_local) < 3:
+        #     E_approx = np.nan
+        # else:
+        #     i_max = np.argmax(spectrum_local)
+        #     E_approx = quadratic_peak(energy_local, spectrum_local, i_max)
+        # E_ests.append(E_approx)
+        # ---------------------
+
+
+
+        # plt.plot(energy_axis[mask][E_est_idx], spectrum_local[E_est_idx], 'rx', label='peak point')
+        # E_est = energy_axis[mask][E_est_idx]
 
     # Exact energies
-    # for j, e in enumerate(H_eigs):
-    #     plt.axvline(e, linestyle="--", alpha=0.5,
-    #                 label="exact energies" if j == 0 else None)
+    E_ests = np.array(E_ests)
+    for j, e in enumerate(H_eigs):
+        plt.axvline(e, linestyle="--", alpha=0.5,
+                    label="exact energies" if j == 0 else None)
     # plt.plot()
-    # plt.xlabel("Energy")
-    # plt.ylabel("Spectral weight")
+    plt.xlabel("Energy")
+    plt.ylabel("Spectral weight")
     # plt.legend()
-    # plt.tight_layout()
-    # plt.savefig('testing_graphs/rayleigh_vs_t.pdf')
+    plt.tight_layout()
+    plt.savefig('testing_graphs/freq_spec.pdf')
 
-    plt.plot(final_Ts, abs(E_ests - E_real), label = 'Energy Diff')
+    plt.figure(2)
+    plt.scatter(final_Ts, E_ests, label = 'Energy')
+    # plt.yscale('log')
+    plt.title('Energy Est vs t')
+    plt.xlabel('time')
+    plt.ylabel('Energy')
+    plt.legend()
+    plt.savefig('testing_graphs/Energy_vs_t.pdf')
+
+    E_ests = (abs(E_ests-E_real))
+
+
+    plt.figure(3)
+    plt.plot(final_Ts, E_ests, label = 'Energy Diff')
     plt.plot(final_Ts, [1E-3] * len(final_Ts), label='chemical accuracy')
     plt.yscale('log')
     plt.title('Rayleigh vs t')
     plt.xlabel('time')
     plt.ylabel('Energy Difference')
     plt.legend()
-    plt.savefig('testing_graphs/rayleigh_vs_t.pdf')
+    plt.savefig('testing_graphs/Energy_Diff_vs_t.pdf')
     # return t_list[-1]
     
 
