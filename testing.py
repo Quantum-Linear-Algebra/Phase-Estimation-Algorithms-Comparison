@@ -14,7 +14,7 @@ from qiskit_aer import AerSimulator
 
 from qiskit_ibm_runtime import Batch, SamplerV2 as Sampler, EstimatorV2 as Estimator
 from qiskit_ibm_runtime import QiskitRuntimeService as QRS
-from qiskit.quantum_info import Operator, Statevector 
+from qiskit.quantum_info import Operator
 from matplotlib.colors import LogNorm
 
 def rayleigh(M, x0, x):
@@ -865,7 +865,7 @@ def quadratic_peak(x, y, i):
 
     return x2 + delta * dx
 
-def rayleigh_vs_t(qubits):
+def err_vs_t(qubits):
     # create example circuit
     parameters = {}
     parameters['sys']      = "HUBB"
@@ -908,9 +908,9 @@ def rayleigh_vs_t(qubits):
             print(i,'overlap:', prob)
             print('eig:', eig_val[i])
     sv = np.copy(init)
-    dt = 0.01
-    final_Ts = np.linspace(1,500,100)
-    final_Ts = np.ceil(final_Ts)
+    dt = 0.1
+    final_Ts = np.linspace(1,400,100)
+    # final_Ts = np.ceil(final_Ts)
     E_ests = []
     # qc_trot_unitary = get_hubb(t, qubits, 1, parameters['T'], parameters['V'])
     # time_evol = Operator(qc_trot_unitary).data
@@ -958,11 +958,17 @@ def rayleigh_vs_t(qubits):
         mask = (energy_axis >= np.min(H_eigs) - 0.2) & (energy_axis <= np.max(H_eigs) + 0.2)
         # mask = (energy_axis >= np.min(E_real) - 0.3) & (energy_axis <= np.min(E_real) + 0.3)
         spectrum_local = spectrum[mask]/max(spectrum[mask])
+        # print('Spectrum length', len(spectrum_local))
+        # spectrum_local = spectrum
         energy_local = energy_axis[mask]
+        # energy_local = energy_axis
         plt.plot(energy_local, abs(spectrum_local), label=fr"$T_{{\max}}={final_T}$")
         max_ids = sp.signal.find_peaks(spectrum_local, height = 0.5)[0]
-        E_est_idx = max_ids[0]
-        E_ests.append(energy_local[E_est_idx])
+        if len(max_ids) == 0:
+            E_ests.append(np.nan)
+        else:
+            E_est_idx = max_ids[0]
+            E_ests.append(energy_local[E_est_idx])
 
         # ---Dr. Faulstich Peak---
         # if len(energy_local) < 3:
@@ -980,9 +986,9 @@ def rayleigh_vs_t(qubits):
 
     # Exact energies
     E_ests = np.array(E_ests)
-    for j, e in enumerate(H_eigs):
-        plt.axvline(e, linestyle="--", alpha=0.5,
-                    label="exact energies" if j == 0 else None)
+    # for j, e in enumerate(H_eigs):
+    #     plt.axvline(e, linestyle="--", alpha=0.5,
+    #                 label="exact energies" if j == 0 else None)
     # plt.plot()
     plt.xlabel("Energy")
     plt.ylabel("Spectral weight")
@@ -1006,7 +1012,161 @@ def rayleigh_vs_t(qubits):
     plt.plot(final_Ts, E_ests, label = 'Energy Diff')
     plt.plot(final_Ts, [1E-3] * len(final_Ts), label='chemical accuracy')
     plt.yscale('log')
-    plt.title('Rayleigh vs t')
+    plt.title('Zoomed Energy Difference vs t X gate init')
+    plt.xlabel('time')
+    plt.ylabel('Energy Difference')
+    plt.legend()
+    plt.savefig('testing_graphs/Energy_Diff_vs_t.pdf')
+    # return t_list[-1]
+
+def trotter_vs_err(qubits):
+    # create example circuit
+    parameters = {}
+    parameters['sys']      = "HUBB"
+    parameters['qubits']   = qubits
+    parameters['scaling']  = 1
+    parameters['shifting'] = 0
+    #HUBB
+    parameters['T']        = 1
+    parameters['V']        = 1.5
+
+    H, _, _, _ = create_hamiltonian(parameters, scale=True) # unscaled, scaled
+    H_eigs, _ = eig(H)
+    E_real = get_ground_hubb(parameters)
+    print('real lowest energy:', E_real)
+    precision = 1E-12
+
+    N = get_total_number_operator(parameters['qubits']//2)
+    H -= precision*N
+    eig_val, eig_vec = eig(H)
+
+    one = [[0],[1]]
+    zero = [[1],[0]]
+    init = [1]
+    for i in range(parameters['qubits']):
+        if i == parameters['qubits'] // 2:
+            init = np.kron(one, init)
+        else:
+            init = np.kron(zero, init)
+
+    # rng = np.random.default_rng(1234)
+    # init = rng.normal(size=2**parameters['qubits']) 
+    # init = init / np.linalg.norm(init)
+    # init = eig_vec[:,3]
+    # init = np.array([[i] for i in init])
+
+    for i in range(len(eig_val)):
+        particle_num = eig_vec[:,i].conj().T@(N@eig_vec[:,i])
+        if np.isclose(particle_num,1):
+            prob = abs(eig_vec[:,i].conj().T@init)**2
+            print(i,'overlap:', prob)
+            print('eig:', eig_val[i])
+    sv = np.copy(init)
+    dt = 0.1
+    final_Ts = np.linspace(1,400,100)
+    # final_Ts = np.ceil(final_Ts)
+    E_ests = []
+    # qc_trot_unitary = get_hubb(t, qubits, 1, parameters['T'], parameters['V'])
+    # time_evol = Operator(qc_trot_unitary).data
+    time_evol = expm(-1.0j*H*dt)
+    plt.figure(1)
+    for final_T in final_Ts:
+        t_list = []
+        signal = []
+        i = 1
+        while i*dt <= final_T:
+            sv = time_evol @ sv
+            # E_test = rayleigh(H, init, sv)
+            overlap = (init.conj().T @ sv)[0][0]
+            
+            t_list.append(dt*i)
+            # diff = abs(E_test-E_real)
+            # signal.append(diff)
+            signal.append(overlap)
+            # print(E_test)
+            i += 1
+        # t_lists.append(t_list)
+        # signals.append(signal)
+        # Windowing
+        window = np.hanning(len(signal))
+        signal *= window
+
+        # Zero padding
+        nfft = 8*len(signal)
+
+        fft_vals = np.fft.fft(signal, n=nfft)
+        freqs = np.fft.fftfreq(nfft, d=dt)
+
+        omega = 2 * np.pi * freqs
+
+        fft_vals = np.fft.fftshift(fft_vals)
+        omega = np.fft.fftshift(omega)
+
+        energy_axis = -omega
+        spectrum = np.abs(fft_vals)
+
+        idx = np.argsort(energy_axis)
+        energy_axis = energy_axis[idx]
+        spectrum = spectrum[idx]
+
+        mask = (energy_axis >= np.min(H_eigs) - 0.2) & (energy_axis <= np.max(H_eigs) + 0.2)
+        # mask = (energy_axis >= np.min(E_real) - 0.3) & (energy_axis <= np.min(E_real) + 0.3)
+        spectrum_local = spectrum[mask]/max(spectrum[mask])
+        # print('Spectrum length', len(spectrum_local))
+        # spectrum_local = spectrum
+        energy_local = energy_axis[mask]
+        # energy_local = energy_axis
+        plt.plot(energy_local, abs(spectrum_local), label=fr"$T_{{\max}}={final_T}$")
+        max_ids = sp.signal.find_peaks(spectrum_local, height = 0.5)[0]
+        if len(max_ids) == 0:
+            E_ests.append(np.nan)
+        else:
+            E_est_idx = max_ids[0]
+            E_ests.append(energy_local[E_est_idx])
+
+        # ---Dr. Faulstich Peak---
+        # if len(energy_local) < 3:
+        #     E_approx = np.nan
+        # else:
+        #     i_max = np.argmax(spectrum_local)
+        #     E_approx = quadratic_peak(energy_local, spectrum_local, i_max)
+        # E_ests.append(E_approx)
+        # ---------------------
+
+
+
+        # plt.plot(energy_axis[mask][E_est_idx], spectrum_local[E_est_idx], 'rx', label='peak point')
+        # E_est = energy_axis[mask][E_est_idx]
+
+    # Exact energies
+    E_ests = np.array(E_ests)
+    # for j, e in enumerate(H_eigs):
+    #     plt.axvline(e, linestyle="--", alpha=0.5,
+    #                 label="exact energies" if j == 0 else None)
+    # plt.plot()
+    plt.xlabel("Energy")
+    plt.ylabel("Spectral weight")
+    # plt.legend()
+    plt.tight_layout()
+    plt.savefig('testing_graphs/freq_spec.pdf')
+
+    plt.figure(2)
+    plt.scatter(final_Ts, E_ests, label = 'Energy')
+    # plt.yscale('log')
+    plt.title('Energy Est vs t')
+    plt.xlabel('time')
+    plt.ylabel('Energy')
+    plt.legend()
+    plt.savefig('testing_graphs/Energy_vs_t.pdf')
+
+    E_ests = (abs(E_ests-E_real))
+
+
+    plt.figure(3)
+    plt.plot(final_Ts, E_ests, label = 'Energy Diff')
+    plt.plot(final_Ts, [1E-3] * len(final_Ts), label='chemical accuracy')
+    plt.yscale('log')
+    plt.title('Zoomed Energy Difference vs t X gate init')
     plt.xlabel('time')
     plt.ylabel('Energy Difference')
     plt.legend()
@@ -1355,5 +1515,4 @@ if __name__ == '__main__':
     # run_tests()
     # trotter_order_vs_sites(parameters={"sys":"HEIS", "trotter_order":1, "num_time_steps":1})
     # exit(1)
-    final_T = rayleigh_vs_t(4)
-    print('Final Time:', final_T)
+    final_T = err_vs_t(4)
