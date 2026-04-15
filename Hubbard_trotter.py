@@ -132,14 +132,14 @@ def get_hubbard_instrs(dt, T, V):
     B = V/4
     # Hopping (XX+YY)
     h_circ = QuantumCircuit(2)
-    h_circ.rxx(J_x*dt, 0, 1)
-    h_circ.ryy(J_x*dt, 0, 1)
+    h_circ.rxx(2*J_x*dt, 0, 1)
+    h_circ.ryy(2*J_x*dt, 0, 1)
     
     # Interaction (ZZ + Z + Z)
     i_circ = QuantumCircuit(2)
-    i_circ.rz(-B*dt, 0)
-    i_circ.rz(-B*dt, 1)
-    i_circ.rzz(B*dt, 0, 1)
+    i_circ.rz(-2*B*dt, 0)
+    i_circ.rz(-2*B*dt, 1)
+    i_circ.rzz(2*B*dt, 0, 1)
     
     return h_circ.to_instruction(label=f"Hop({dt})"), i_circ.to_instruction(label=f"Int({dt})")
 
@@ -165,120 +165,191 @@ def get_hubb(dt, n_qubits, T, V):# First Order Trotterization
     # qc_evol.draw("mpl")
     return qc_evol
 
+def number_operator(n_qubits):
+    N = np.zeros((2**n_qubits, 2**n_qubits), dtype=complex)
+    for i in range(n_qubits):
+        Z = 1
+        for j in range(n_qubits):
+            if i == j:
+                Z = np.kron(Z, np.array([[1,0],[0,-1]]))
+            else:
+                Z = np.kron(Z, np.eye(2))
+        N += 0.5 * (np.eye(2**n_qubits) - Z)
+    return N
 
-#--------------------------------------------#
+def quadratic_peak(x, y, i):
+    """Sub-bin peak location from 3-point quadratic interpolation."""
+    if i <= 0 or i >= len(y) - 1:
+        return x[i]
 
+    y1, y2, y3 = y[i - 1], y[i], y[i + 1]
+    x1, x2, x3 = x[i - 1], x[i], x[i + 1]
 
-parameters = {}
-parameters['sys']      = "HUBB"
-parameters['qubits']   = 4 # 2*sites
-#HUBB
-parameters['T']        = 1
-parameters['V']        = 1.5
+    denom = y1 - 2.0 * y2 + y3
+    if abs(denom) < 1e-14:
+        return x2
 
-H = create_hamiltonian(parameters, scale=True)
-H_eigs, _ = eig(H)
-E_real = get_ground_hubb(parameters)
-print('real lowest energy:', E_real)
+    dx = x2 - x1
+    delta = 0.5 * (y1 - y3) / denom
+    delta = np.clip(delta, -1.0, 1.0)
 
-one = [[0],[1]]
-zero = [[1],[0]]
-init = [1]
-for i in range(parameters['qubits']):
-    if i == parameters['qubits'] // 2:
-        init = np.kron(one, init)
-    else:
-        init = np.kron(zero, init)
+    return x2 + delta * dx
 
-sv = np.copy(init)
-final_T = 375
-M = 1000
-E_ests = []
-plt.figure(1)
-for m in range(1,M + 1):
-    t_list = []
-    signal = []
-    dt = final_T/m
-    
-    qc_trot_unitary = get_hubb(dt, parameters['qubits'], parameters['T'], parameters['V'])
-    time_evol = Operator(qc_trot_unitary).data
-    i = 1
-    while i*dt <= final_T:
-        sv = time_evol @ sv
-        # E_test = rayleigh(H, init, sv)
-        overlap = (init.conj().T @ sv)[0][0]
+def make_trotter_plot(sites_list:list[int]):
+    final_times = [2.69, 28.04, 28.04, 22.97, 39.87] # sites 1-5 (qubits 2-10)
+    M = 100
+    E_approx_list = []
+    error = []
+    for j, sites in enumerate(sites_list): 
+        parameters = {}
+        parameters['sys']      = "HUBB"
+        parameters['qubits']   = 2*sites
+        #HUBB
+        parameters['T']        = 1
+        parameters['V']        = 1.5
+
+        n_target = parameters['qubits']/2 # half filling
+        T = final_times[j]
+
+        H = create_hamiltonian(parameters, scale=True)
+        E, V = np.linalg.eigh(H)
+
+        N_op = number_operator(parameters['qubits'])
+        # H -= 1e-9*N_op
+
+        # Analyze spectrum 
+        E_targets = []
+        print("Energy eigenvalues:")
+        for k, e in enumerate(E):
+            n_expect = np.real(V[:,k].conj().T @ (N_op @ V[:,k]))
+            # print(f'eigenvalue {k}, energy {e:.3f}, particle number {np.round(n_expect)}')
+            if np.abs(n_expect - n_target) < 1e-3:
+                E_targets.append(e)
+
+        E_targets = np.array(E_targets)
         
-        t_list.append(dt*i)
-        # diff = abs(E_test-E_real)
-        # signal.append(diff)
-        signal.append(overlap)
-        # print(E_test)
-        i += 1
+        print(f'Energies of {n_target}-particle states:')
+        print(E_targets)
+        n_min = np.argmin(E_targets)
 
-    # Windowing
-    window = np.hanning(len(signal))
-    signal *= window
+        print(f'Lowest energy {E_targets[n_min]}')
 
-    # Zero padding
-    nfft = 8*len(signal)
+        one = [[0],[1]]
+        zero = [[1],[0]]
 
-    fft_vals = np.fft.fft(signal, n=nfft)
-    freqs = np.fft.fftfreq(nfft, d=dt)
+        init = [1]
+        for i in range(parameters['qubits']):
+            if -n_target/2 <= i-parameters['qubits']//2 and i-parameters['qubits']//2 < n_target/2:
+                print('1')
+                init = np.kron(one, init)
+            else:
+                print('0')
+                init = np.kron(zero, init)
+        
+        psi1_init = init/np.linalg.norm(init)
+        overlaps = (np.abs(V.conj().T @ psi1_init) ** 2)
+        print("Projected-state spectral weights:")
+        # for n, w in enumerate(overlaps):
+        #     print(f"n={n}: {w:.6f}")
 
-    omega = 2 * np.pi * freqs
+        target_E = E_targets[n_min]
 
-    fft_vals = np.fft.fftshift(fft_vals)
-    omega = np.fft.fftshift(omega)
+        E_approxs = []
+        errors = []
+        for m in range(1, M + 1):
+            # nsteps = int(np.ceil(T / 0.1)+1)
+            times = np.linspace(0.0, T, m)
+            dt = T/m
+            # print(T, dt)
 
-    energy_axis = -omega
-    spectrum = np.abs(fft_vals)
+            # U_dt = expm(-1j * H * dt)
+            qc_trot_unitary = get_hubb(dt, parameters['qubits'], parameters['T'], parameters['V'])
+            U_dt = Operator(qc_trot_unitary).data
 
-    idx = np.argsort(energy_axis)
-    energy_axis = energy_axis[idx]
-    spectrum = spectrum[idx]
+            psi = psi1_init.copy()
+            overlap = []
 
-    mask = (energy_axis >= np.min(H_eigs) - 0.2) & (energy_axis <= np.max(H_eigs) + 0.2)
-    spectrum_local = spectrum[mask]/max(spectrum[mask])
-    energy_local = energy_axis[mask]
-    plt.plot(energy_local, abs(spectrum_local), label=fr"$T_{{\max}}={final_T}$")
-    max_ids = sp.signal.find_peaks(spectrum_local, height = 0.5)[0]
-    if len(max_ids) == 0:
-        E_ests.append(np.nan)
-    else:
-        E_est_idx = max_ids[0]
-        E_ests.append(energy_local[E_est_idx])
+            for _ in range(m):
+                # autocorrelation in the projected subspace
+                overlap.append(np.vdot(psi1_init, psi))
+                psi = U_dt @ psi
 
-    # plt.plot(energy_axis[mask][E_est_idx], spectrum_local[E_est_idx], 'rx', label='peak point')
-    # E_est = energy_axis[mask][E_est_idx]
+            overlap = np.array(overlap)
 
-# Exact energies
-E_ests = np.array(E_ests)
-for j, e in enumerate(H_eigs):
-    plt.axvline(e, linestyle="--", alpha=0.5,
-                label="exact energies" if j == 0 else None)
-plt.xlabel("Energy")
-plt.ylabel("Spectral weight")
-# plt.legend()
-plt.tight_layout()
-plt.savefig('MWE_plots/freq_spec.pdf')
+            # Window
+            window = np.hanning(len(overlap))
+            signal = overlap * window
 
-plt.figure(2)
-plt.scatter(range(1, M+1), E_ests, label = 'Energy')
-# plt.yscale('log')
-plt.title('Energy Est vs time steps')
-plt.xlabel('M')
-plt.ylabel('Energy')
-plt.legend()
-plt.savefig('MWE_plots/Energy_vs_t.pdf')
+            # Zero padding
+            nfft = 8 * len(signal)
 
-E_ests = (abs(E_ests-E_real))
+            fft_vals = np.fft.fft(signal, n=nfft)
+            freqs = np.fft.fftfreq(nfft, d=dt)
+            omega = 2.0 * np.pi * freqs
 
-plt.figure(3)
-plt.plot(range(1, M+1), E_ests, label = 'Energy Diff')
-plt.plot(range(1, M+1), [1E-3] * len(range(1, M+1)), label='chemical accuracy')
-plt.yscale('log')
-plt.title('Zoomed Energy Difference vs t X gate init')
-plt.xlabel('M')
-plt.ylabel('Energy Difference')
-plt.legend()
-plt.savefig('MWE_plots/Energy_Diff_vs_t.pdf')
+            fft_vals = np.fft.fftshift(fft_vals)
+            omega = np.fft.fftshift(omega)
+
+            energy_axis = -omega
+            spectrum = np.abs(fft_vals)
+
+            idx = np.argsort(energy_axis)
+            energy_axis = energy_axis[idx]
+            spectrum = spectrum[idx]
+
+            # Since ground state is removed, E1 is now the lowest strong peak.
+            # Use a broad window around E1 and refine with quadratic interpolation.
+            window_half_width = max(0.05, 3.0 * 2.0 * np.pi / T)
+
+            mask = (
+                (energy_axis >= target_E - window_half_width)
+                & (energy_axis <= target_E + window_half_width)
+            )
+
+            energy_local = energy_axis[mask]
+            spectrum_local = spectrum[mask]
+
+            if len(energy_local) < 3:
+                E_approx = np.nan
+            else:
+                i_max = np.argmax(spectrum_local)
+                E_approx = quadratic_peak(energy_local, spectrum_local, i_max)
+
+            E_approxs.append(E_approx)
+            errors.append(abs(E_approx - target_E))
+        E_approx_list.append(E_approxs)
+        error.append(errors)
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    im = axes[0].imshow(error, aspect='auto')
+
+    cbar = axes[0].figure.colorbar(im, ax=axes[0])
+    cbar.ax.set_ylabel("Error", rotation=-90, va="bottom")
+
+    axes[0].set_xticks(range(M))
+    axes[0].set_xticklabels(range(1, M + 1), rotation=45, ha="right", rotation_mode="anchor")
+    axes[0].set_yticks(range(len(sites_list)))
+    axes[0].set_yticklabels(sites_list)
+
+    # for i in range(1, sites + 1):
+    #     for j in range(1, sites + 1):
+    #         text = ax.text(j, i, error[i, j],
+    #                     ha="center", va="center", color="w")
+
+    axes[0].set_xlabel("Trotter Steps (M)")
+    axes[0].set_ylabel("Number of Sites (L)")
+    axes[0].set_title(f"Hubbard ({parameters['qubits'] // 2} sites, T={parameters['T']}, V={parameters['V']} | targeted particle number {n_target})")
+
+    axes[1].plot(range(1, M+1), error[-1], label = 'Energy Diff')
+    axes[1].plot(range(1, M+1), [1E-3] * len(range(1, M+1)), label='chemical accuracy')
+    axes[1].set_yscale('log')
+    axes[1].set_title('Energy Difference vs t')
+    axes[1].set_xlabel('M')
+    axes[1].set_ylabel('Energy Difference')
+    axes[1].legend(loc=3)
+    fig.tight_layout()
+    plt.savefig('testing_graphs/Hubb_conv.pdf')
+
+
+if __name__ == "__main__":
+    make_trotter_plot(range(1,4))

@@ -220,14 +220,14 @@ def get_final_times(sites_list:list[int]):
         # for n, w in enumerate(overlaps):
         #     print(f"n={n}: {w:.6f}")
         
-        final_times = np.linspace(1, 40, 30)
+        final_times = np.linspace(1, 50, 30)
         E_approx_list = []
         error = []
 
         target_E = E_targets[n_min]
 
         smallest_T = final_times[-1]
-        for T in final_times:
+        for j, T in enumerate(final_times):
             nsteps = int(np.ceil(T / 0.1)+1)
             times = np.linspace(0.0, T, nsteps)
             dt = times[1] - times[0]
@@ -295,10 +295,10 @@ def get_final_times(sites_list:list[int]):
             else:
                 consistent = False
             if consistent:
-                smallest_T = T
+                smallest_T = final_times[j-2]
                 break
         print(error)
-        print("First time under chemical accuracy",smallest_T)
+        print("First time under chemical accuracy for", sites, "sites", smallest_T)
         smallest_Ts.append(smallest_T)       
         fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
         length = len(E_approx_list)
@@ -311,17 +311,19 @@ def get_final_times(sites_list:list[int]):
         axes[0].set_title("Energy estimate")
 
         axes[1].plot(final_times[:length], np.abs(error), "o-")
+        axes[1].axvline(smallest_T, label="Stopping Time")
         axes[1].axhline(1e-3, color="k", linestyle="--")
         axes[1].set_xlabel(r"Final time $T$")
         axes[1].set_ylabel(r"$E_{\rm approx}(T) - E_1$")
         axes[1].set_title("Error")
         axes[1].set_yscale("log")
+        axes[1].legend()
 
         fig.suptitle(f"Hubbard ({parameters['qubits'] // 2} sites, T={parameters['T']}, V={parameters['V']} | targeted particle number {n_target})")
         plt.tight_layout()
         # plt.show()
-        plt.savefig('testing_graphs/conv.pdf')
+        plt.savefig('MWE_plots/Hubb_conv.pdf')
     return smallest_Ts
 
 if __name__ == "__main__":
-    print(get_final_times(range(1,4)))
+    print(get_final_times(range(1,6)))
