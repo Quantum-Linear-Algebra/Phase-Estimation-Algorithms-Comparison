@@ -177,7 +177,7 @@ def get_final_times(sites_list:list[int]):
 
         # Analyze spectrum 
         E_targets = []
-        print("Energy eigenvalues:")
+        # print("Energy eigenvalues:")
         for k, e in enumerate(E):
             n_expect = np.real(V[:,k].conj().T @ (N_op @ V[:,k]))
             # print(f'eigenvalue {k}, energy {e:.3f}, particle number {np.round(n_expect)}')
@@ -193,13 +193,13 @@ def get_final_times(sites_list:list[int]):
 
         psi /= np.linalg.norm(psi)
         n_init = np.real(psi.conj().T @ (N_op @ psi))
-        print(f'Initial state in particle number sector {n_init} (target: {n_target})')
+        # print(f'Initial state in particle number sector {n_init} (target: {n_target})')
         
-        print(f'Energies of {n_target}-particle states:')
-        print(E_targets)
+        # print(f'Energies of {n_target}-particle states:')
+        # print(E_targets)
         n_min = np.argmin(E_targets)
 
-        print(f'Lowest energy {E_targets[n_min]}')
+        # print(f'Lowest energy {E_targets[n_min]}')
 
         one = [[0],[1]]
         zero = [[1],[0]]
@@ -207,16 +207,16 @@ def get_final_times(sites_list:list[int]):
 
         for i in range(parameters['qubits']):
             if -n_target/2 <= i-parameters['qubits']//2 and i-parameters['qubits']//2 < n_target/2:
-                print('1')
+                # print('1')
                 init = np.kron(one, init)
             else:
-                print('0')
+                # print('0')
                 init = np.kron(zero, init)
         
         # psi1_init = psi
         psi1_init = init/np.linalg.norm(init)
-        overlaps = (np.abs(V.conj().T @ psi1_init) ** 2)
-        print("Projected-state spectral weights:")
+        # overlaps = (np.abs(V.conj().T @ psi1_init) ** 2)
+        # print("Projected-state spectral weights:")
         # for n, w in enumerate(overlaps):
         #     print(f"n={n}: {w:.6f}")
         
@@ -297,7 +297,7 @@ def get_final_times(sites_list:list[int]):
             if consistent:
                 smallest_T = final_times[j-2]
                 break
-        print(error)
+        # print(error)
         print("First time under chemical accuracy for", sites, "sites", smallest_T)
         smallest_Ts.append(smallest_T)       
         fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
@@ -326,4 +326,4 @@ def get_final_times(sites_list:list[int]):
     return smallest_Ts
 
 if __name__ == "__main__":
-    print(get_final_times(range(1,6)))
+    print(get_final_times(range(1,3)))

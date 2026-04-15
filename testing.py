@@ -774,6 +774,8 @@ def run_tests():
     assert(check_matrices(trotter_circ_mat, H_datas['HUBB'][0], 1E-2))
     assert(check_spectrum(trotter_circ_mat, H_datas['HUBB'][0], 1E-2))
     print("COMPLETED HUBBARD TESTS")
+
+    
 import scipy as sp, itertools as it
 def single_particle_gs(H_op, n_qubits):
     """
