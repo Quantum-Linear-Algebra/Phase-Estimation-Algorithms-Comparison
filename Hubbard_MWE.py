@@ -4,6 +4,8 @@ import scipy as sp
 import matplotlib.pyplot as plt
 from scipy.linalg import eig, expm
 from qiskit.quantum_info import Pauli, SparsePauliOp
+from qiskit.circuit import QuantumCircuit, QuantumRegister
+from qiskit.quantum_info import Operator
 
 def number_operator(n_qubits):
     N = np.zeros((2**n_qubits, 2**n_qubits), dtype=complex)
@@ -156,6 +158,44 @@ def create_hamiltonian(parameters, scale=True, show_steps=False):
     else: assert(False)
     return H
 
+def get_hubbard_instrs(dt, T, V):
+    J_x = -T/2
+    B = V/4
+    # Hopping (XX+YY)
+    h_circ = QuantumCircuit(2)
+    h_circ.rxx(2*J_x*dt, 0, 1)
+    h_circ.ryy(2*J_x*dt, 0, 1)
+    
+    # Interaction (ZZ + Z + Z)
+    i_circ = QuantumCircuit(2)
+    i_circ.rz(-2*B*dt, 0)
+    i_circ.rz(-2*B*dt, 1)
+    i_circ.rzz(2*B*dt, 0, 1)
+    
+    return h_circ.to_instruction(label=f"Hop({dt})"), i_circ.to_instruction(label=f"Int({dt})")
+
+def get_hubb(dt, n_qubits, T, V):# First Order Trotterization
+    hop_instr, int_instr = get_hubbard_instrs(dt, T, V)
+    qr = QuantumRegister(n_qubits)
+    qc_evol = QuantumCircuit(qr)
+       
+    # Hopping
+    # Even
+    for i in range(0, n_qubits - 2, 2):
+        qc_evol.append(hop_instr, [qr[i], qr[i+2]])
+    # Odd
+    for i in range(1, n_qubits - 2, 2):
+        qc_evol.append(hop_instr, [qr[i], qr[i+2]])
+    qc_evol.barrier()
+
+    # Interaction
+    for i in range(0, n_qubits, 2):
+        qc_evol.append(int_instr, [qr[i], qr[i+1]])
+        
+    # qc_evol.decompose().draw("mpl")
+    # qc_evol.draw("mpl")
+    return qc_evol
+
 
 def get_final_times(sites_list:list[int]):
     smallest_Ts = []
@@ -220,7 +260,7 @@ def get_final_times(sites_list:list[int]):
         # for n, w in enumerate(overlaps):
         #     print(f"n={n}: {w:.6f}")
         
-        final_times = np.linspace(1, 50, 30)
+        final_times = np.linspace(1, 1000, 30)
         E_approx_list = []
         error = []
 
@@ -228,12 +268,14 @@ def get_final_times(sites_list:list[int]):
 
         smallest_T = final_times[-1]
         for j, T in enumerate(final_times):
-            nsteps = int(np.ceil(T / 0.1)+1)
+            nsteps = int(np.ceil(T / 0.01)+1)
             times = np.linspace(0.0, T, nsteps)
             dt = times[1] - times[0]
-            # print(T, dt)
+            print(T, dt)
 
-            U_dt = expm(-1j * H * dt)
+            # U_dt = expm(-1j * H * dt)
+            qc_trot_unitary = get_hubb(dt, parameters['qubits'], parameters['T'], parameters['V'])
+            U_dt = Operator(qc_trot_unitary).data
 
             psi = psi1_init.copy()
             overlap = []
@@ -310,9 +352,9 @@ def get_final_times(sites_list:list[int]):
         axes[0].legend()
         axes[0].set_title("Energy estimate")
 
-        axes[1].plot(final_times[:length], np.abs(error), "o-")
-        axes[1].axvline(smallest_T, label="Stopping Time")
-        axes[1].axhline(1e-3, color="k", linestyle="--")
+        axes[1].plot(final_times[:length], np.abs(error), "o-", label=f'dt={dt}')
+        # axes[1].axvline(smallest_T, label="Stopping Time")
+        axes[1].axhline(1e-3, color="k", linestyle="--", label='chemical accuracy')
         axes[1].set_xlabel(r"Final time $T$")
         axes[1].set_ylabel(r"$E_{\rm approx}(T) - E_1$")
         axes[1].set_title("Error")

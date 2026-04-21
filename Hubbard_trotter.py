@@ -197,7 +197,9 @@ def quadratic_peak(x, y, i):
     return x2 + delta * dx
 
 def make_trotter_plot(sites_list:list[int]):
-    final_times = Hubbard_MWE.get_final_times(sites_list) # sites 1-5 (qubits 2-10)
+    # final_times = Hubbard_MWE.get_final_times(sites_list) # sites 1-5 (qubits 2-10)
+    final_times = [2.689655172413793, 28.03448275862069, 28.03448275862069, 22.96551724137931]
+    final_times = [28.03448275862069]
     print('FINISHED GETTING FINAL TIMES')
     E_approx_list = []
     error = []
@@ -259,7 +261,8 @@ def make_trotter_plot(sites_list:list[int]):
 
         E_approxs = []
         errors = []
-        for dt in [.1,.01,.001,.0001]:
+        dts = [.1,.01,.001,.0001]
+        for dt in dts:
             i = int(T/dt)
             final_times[j] = i*dt
             T = final_times[j]
@@ -270,6 +273,7 @@ def make_trotter_plot(sites_list:list[int]):
             time_evo = expm(-1j * H * dt)
             qc_trot_unitary = get_hubb(dt, parameters['qubits'], parameters['T'], parameters['V'])
             U_dt = Operator(qc_trot_unitary).data
+            # U_dt = time_evo
 
             print("err diff", np.linalg.norm(U_dt-time_evo))
 
@@ -329,14 +333,30 @@ def make_trotter_plot(sites_list:list[int]):
         E_approx_list.append(E_approxs)
         error.append(errors)
 
-    fig, axes = plt.subplots(1, len(final_times)+1, figsize=(8*(len(final_times)+1), 6))
+    plt.plot(energy_local, abs(spectrum_local), label=fr"$Sites={sites}$")
+    plt.title(fr"Trot Spectrum, final T ={T:.3f}, dt ={dt}")
+    plt.xlabel('Energies')
+    plt.legend(loc='upper left')
+    plt.savefig('testing_graphs/freq_spec.pdf')
+    print('Target', target_E)
+
+    print(error)
+    plt.plot(len(error[-1]), error[-1])
+    plt.savefig('testing_graphs/Hubb_conv.pdf')
+
+    exit()
+
+    fig, axes = plt.subplots(1, 1, figsize=(8, 5))
+    axes = [axes]
     im = axes[0].imshow(error, aspect='auto')
 
     cbar = axes[0].figure.colorbar(im, ax=axes[0])
     cbar.ax.set_ylabel("Error", rotation=-90, va="bottom")
     # cbar.ax.set_yscale("log")
 
-    axes[0].set_xticks(range(M))
+    m_list = np.array(final_times)/np.array(dts)
+    axes[0].set_xticks(range(len(m_list)))
+    axes[0].set_xticklabels(m_list)
     # axes[0].set_xticklabels(range(1, M + 1), rotation=45, ha="right", rotation_mode="anchor")
     axes[0].set_yticks(range(len(sites_list)))
     axes[0].set_yticklabels(sites_list)
@@ -345,23 +365,22 @@ def make_trotter_plot(sites_list:list[int]):
     #     for j in range(1, sites + 1):
     #         text = ax.text(j, i, error[i, j],
     #                     ha="center", va="center", color="w")
-
     axes[0].set_xlabel("Trotter Steps (M)")
     axes[0].set_ylabel("Number of Sites (L)")
     axes[0].set_title(f"Hubbard ({parameters['qubits'] // 2} sites, T={parameters['T']}, V={parameters['V']} | targeted particle number {n_target})")
 
-    for i in range(len(final_times)):
-        print()
-        axes[i+1].plot(range(1, M+1), error[i], label = 'Energy Diff')
-        axes[i+1].plot(range(1, M+1), [1E-3] * len(range(1, M+1)), label='chemical accuracy')
-        axes[i+1].set_yscale('log')
-        axes[i+1].set_title('Energy Difference vs t')
-        axes[i+1].set_xlabel('M')
-        axes[i+1].set_ylabel('Energy Difference')
-        axes[i+1].legend(loc=3)
+    # for i in range(len(final_times)):
+    #     axes[i+1].plot(range(1, M+1), error[i], label = 'Energy Diff')
+    #     axes[i+1].plot(range(1, M+1), [1E-3] * len(range(1, M+1)), label='chemical accuracy')
+    #     axes[i+1].set_yscale('log')
+    #     axes[i+1].set_title('Energy Difference vs t')
+    #     axes[i+1].set_xlabel('M')
+    #     axes[i+1].set_ylabel('Energy Difference')
+    #     axes[i+1].legend(loc=3)
     fig.tight_layout()
     plt.savefig('testing_graphs/Hubb_conv.pdf')
 
 
 if __name__ == "__main__":
-    make_trotter_plot(range(1,5))
+    np.set_printoptions(linewidth=np.inf)
+    make_trotter_plot(range(2,3))
