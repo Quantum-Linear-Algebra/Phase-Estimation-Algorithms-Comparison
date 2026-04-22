@@ -260,100 +260,112 @@ def get_final_times(sites_list:list[int]):
         # for n, w in enumerate(overlaps):
         #     print(f"n={n}: {w:.6f}")
         
-        final_times = np.linspace(1, 1000, 30)
-        E_approx_list = []
-        error = []
+        
 
         target_E = E_targets[n_min]
-
+        final_times = np.linspace(1, 1000, 30)
         smallest_T = final_times[-1]
-        for j, T in enumerate(final_times):
-            nsteps = int(np.ceil(T / 0.01)+1)
-            times = np.linspace(0.0, T, nsteps)
-            dt = times[1] - times[0]
-            print(T, dt)
-
-            # U_dt = expm(-1j * H * dt)
-            qc_trot_unitary = get_hubb(dt, parameters['qubits'], parameters['T'], parameters['V'])
-            U_dt = Operator(qc_trot_unitary).data
-
-            psi = psi1_init.copy()
-            overlap = []
-
-            for _ in range(nsteps):
-                # autocorrelation in the projected subspace
-                overlap.append(np.vdot(psi1_init, psi))
-                psi = U_dt @ psi
-
-            overlap = np.array(overlap)
-
-            # Window
-            window = np.hanning(len(overlap))
-            signal = overlap * window
-
-            # Zero padding
-            nfft = 8 * len(signal)
-
-            fft_vals = np.fft.fft(signal, n=nfft)
-            freqs = np.fft.fftfreq(nfft, d=dt)
-            omega = 2.0 * np.pi * freqs
-
-            fft_vals = np.fft.fftshift(fft_vals)
-            omega = np.fft.fftshift(omega)
-
-            energy_axis = -omega
-            spectrum = np.abs(fft_vals)
-
-            idx = np.argsort(energy_axis)
-            energy_axis = energy_axis[idx]
-            spectrum = spectrum[idx]
-
-            # Since ground state is removed, E1 is now the lowest strong peak.
-            # Use a broad window around E1 and refine with quadratic interpolation.
-            window_half_width = max(0.05, 3.0 * 2.0 * np.pi / T)
-
-            mask = (
-                (energy_axis >= target_E - window_half_width)
-                & (energy_axis <= target_E + window_half_width)
-            )
-
-            energy_local = energy_axis[mask]
-            spectrum_local = spectrum[mask]
-
-            if len(energy_local) < 3:
-                E_approx = np.nan
-            else:
-                i_max = np.argmax(spectrum_local)
-                E_approx = quadratic_peak(energy_local, spectrum_local, i_max)
-
-            E_approx_list.append(E_approx)
-            error.append(abs(E_approx - target_E))
-            if len(error) > 3:
-                consistent = True
-                for i in range(1, 4):
-                    if error[-i] > 1E-3:
-                        consistent = False
-                        break
-            else:
-                consistent = False
-            if consistent:
-                smallest_T = final_times[j-2]
-                break
-        # print(error)
-        print("First time under chemical accuracy for", sites, "sites", smallest_T)
-        smallest_Ts.append(smallest_T)       
         fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
-        length = len(E_approx_list)
-        axes[0].plot(final_times[:length], E_approx_list, "o-", label=r"$E_{\rm approx}(T)$")
-        axes[0].axhline(target_E, color="k", linestyle="--", label=r"Target Energy")
-        axes[0].set_xlabel(r"Final time $T$")
-        axes[0].set_ylabel(r"$e_{\rm approx}(t)$")
-        #axes[0].set_ylim([target_E-0.001, target_E+0.001])
-        axes[0].legend()
-        axes[0].set_title("Energy estimate")
+        for i in range(2):
+            E_approx_list = []
+            error = []
+            for j, T in enumerate(final_times):
+                nsteps = int(np.ceil(T / 0.01)+1)
+                print("steps", nsteps)
+                times = np.linspace(0.0, T, nsteps)
+                dt = times[1] - times[0]
 
-        axes[1].plot(final_times[:length], np.abs(error), "o-", label=f'dt={dt}')
-        # axes[1].axvline(smallest_T, label="Stopping Time")
+                if i == 0:
+                    U_dt = expm(-1j * H * dt)
+                else:
+                    qc_trot_unitary = get_hubb(dt, parameters['qubits'], parameters['T'], parameters['V'])
+                    U_dt = Operator(qc_trot_unitary).data
+
+                psi = psi1_init.copy()
+                overlap = []
+
+                for _ in range(nsteps):
+                    # autocorrelation in the projected subspace
+                    overlap.append(np.vdot(psi1_init, psi))
+                    psi = U_dt @ psi
+
+                overlap = np.array(overlap)
+
+                # Window
+                window = np.hanning(len(overlap))
+                signal = overlap * window
+
+                # Zero padding
+                nfft = 8 * len(signal)
+
+                fft_vals = np.fft.fft(signal, n=nfft)
+                freqs = np.fft.fftfreq(nfft, d=dt)
+                omega = 2.0 * np.pi * freqs
+
+                fft_vals = np.fft.fftshift(fft_vals)
+                omega = np.fft.fftshift(omega)
+
+                energy_axis = -omega
+                spectrum = np.abs(fft_vals)
+
+                idx = np.argsort(energy_axis)
+                energy_axis = energy_axis[idx]
+                spectrum = spectrum[idx]
+
+                # Since ground state is removed, E1 is now the lowest strong peak.
+                # Use a broad window around E1 and refine with quadratic interpolation.
+                window_half_width = max(0.05, 3.0 * 2.0 * np.pi / T)
+
+                mask = (
+                    (energy_axis >= target_E - window_half_width)
+                    & (energy_axis <= target_E + window_half_width)
+                )
+
+                energy_local = energy_axis[mask]
+                spectrum_local = spectrum[mask]
+
+                if len(energy_local) < 3:
+                    E_approx = np.nan
+                else:
+                    i_max = np.argmax(spectrum_local)
+                    E_approx = quadratic_peak(energy_local, spectrum_local, i_max)
+
+                E_approx_list.append(E_approx)
+                error.append(abs(E_approx - target_E))
+                # if len(error) > 3:
+                #     consistent = True
+                #     for i in range(1, 4):
+                #         if error[-i] > 1E-3:
+                #             consistent = False
+                #             break
+                # else:
+                #     consistent = False
+                # if consistent:
+                #     smallest_T = final_times[j-2]
+                #     break
+                # print(error)
+
+            # plot the convergence of the first time that coverges
+            print("First time under chemical accuracy for", sites, "sites", smallest_T)
+            smallest_Ts.append(smallest_T)       
+            length = min(len(E_approx_list), len(final_times))
+            final_times = final_times[:length]
+            E_approx_list = E_approx_list[:length]
+            error = error[:length]
+            if i == 0:
+                label = r"$E_{\rm ideal}(T)$"
+            else:
+                label = r"$E_{\rm approx}(T)$"
+            axes[0].plot(final_times, E_approx_list, "o-", label=label)
+            axes[0].axhline(target_E, color="k", linestyle="--", label=r"Target Energy")
+            axes[0].set_xlabel(r"Final time $T$")
+            axes[0].set_ylabel(r"$e_{\rm approx}(t)$")
+            #axes[0].set_ylim([target_E-0.001, target_E+0.001])
+            axes[0].legend()
+            axes[0].set_title("Energy estimate")
+
+            axes[1].plot(final_times, np.abs(error), "o-", label=f'dt={dt}')
+            axes[1].axvline(smallest_T, label="Stopping Time")
         axes[1].axhline(1e-3, color="k", linestyle="--", label='chemical accuracy')
         axes[1].set_xlabel(r"Final time $T$")
         axes[1].set_ylabel(r"$E_{\rm approx}(T) - E_1$")
@@ -364,7 +376,7 @@ def get_final_times(sites_list:list[int]):
         fig.suptitle(f"Hubbard ({parameters['qubits'] // 2} sites, T={parameters['T']}, V={parameters['V']} | targeted particle number {n_target})")
         plt.tight_layout()
         # plt.show()
-        plt.savefig('MWE_plots/Hubb_conv.pdf')
+        plt.savefig(f'MWE_plots/Hubb_conv_T={T:.3f}_sites={sites}.pdf')
     return smallest_Ts
 
 if __name__ == "__main__":
